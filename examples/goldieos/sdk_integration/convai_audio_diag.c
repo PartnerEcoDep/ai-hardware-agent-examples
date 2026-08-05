@@ -24,37 +24,6 @@
 /* vad_detect return interpretation (webrtc_vad convention). */
 enum { DIAG_VAD_ERR = -1, DIAG_VAD_NO = 0, DIAG_VAD_YES = 1 };
 
-/* Mean absolute value of `n` int16 samples (RMS proxy, no sqrt). */
-static unsigned int diag_rms(const int16_t *samples, size_t n)
-{
-    if (n == 0) return 0;
-    unsigned long acc = 0;
-    for (size_t i = 0; i < n; i++) {
-        long v = samples[i];
-        acc += (unsigned long)(v < 0 ? -v : v);
-    }
-    return (unsigned int)(acc / n);
-}
-
-/* Signed mean of `n` int16 samples — DC-offset probe. ~0 healthy; large ± =
- * mic/hardware bias (white-noise signature at the backend). */
-static int diag_dc_offset(const int16_t *samples, size_t n)
-{
-    if (n == 0) return 0;
-    long acc = 0;
-    for (size_t i = 0; i < n; i++) acc += samples[i];
-    return (int)(acc / (long)n);
-}
-
-/* Count exactly-zero samples in `n` int16 samples — exposes "audio_read
- * returned bytes but they're all silent" (hidden capture failure). */
-static unsigned int diag_zero_count(const int16_t *samples, size_t n)
-{
-    unsigned int z = 0;
-    for (size_t i = 0; i < n; i++) if (samples[i] == 0) z++;
-    return z;
-}
-
 void audio_diag_update(struct AudioService *audio,
                        const int16_t *planar, size_t n, int read_ok)
 {
@@ -69,16 +38,32 @@ void audio_diag_update(struct AudioService *audio,
     if (!read_ok) {
         nodata++;
     } else if (n > 0 && planar != NULL) {
+        /* Single pass over both channels: accumulate L abs-sum (rmsL), L signed-sum
+         * (dc), L zero-count, and R abs-sum (rmsR) in one loop — previously three
+         * separate helper calls each walking L, plus one for R (4 passes total). */
         const int16_t *L = planar;
         const int16_t *R = planar + n;   /* planar layout: [L(n).. R(n)..] */
-        unsigned int rL = diag_rms(L, n);
-        unsigned int rR = diag_rms(R, n);
+        unsigned long absL = 0, absR = 0;
+        long          sumL = 0;
+        unsigned int  zeros = 0;
+        for (size_t i = 0; i < n; i++) {
+            int16_t sl = L[i];
+            int16_t sr = R[i];
+            long vl = sl;
+            long vr = sr;
+            absL  += (unsigned long)(vl < 0 ? -vl : vl);
+            absR  += (unsigned long)(vr < 0 ? -vr : vr);
+            sumL  += vl;
+            if (sl == 0) zeros++;
+        }
+        unsigned int rL = (unsigned int)(absL / n);
+        unsigned int rR = (unsigned int)(absR / n);
         if (rL < rmsL_min) rmsL_min = rL;  if (rL > rmsL_max) rmsL_max = rL;
         if (rR < rmsR_min) rmsR_min = rR;  if (rR > rmsR_max) rmsR_max = rR;
 
-        if (diag_zero_count(L, n) == n) allzero++;          /* entire L channel zero */
+        if (zeros == n) allzero++;          /* entire L channel zero */
 
-        int dc = diag_dc_offset(L, n);
+        int dc = (int)(sumL / (long)n);
         if (dc < -DIAG_DC_WARN_THRESH || dc > DIAG_DC_WARN_THRESH) dcwarn++;
 
         /* vad_detect probe: 160-sample (20ms @ 8kHz) left-channel frame.
