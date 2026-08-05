@@ -389,6 +389,7 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     # 常规按需链接会被丢弃, 导致程序启动后无初始化动作.
     set(WIN_LINK_LIBS
         -mconsole
+        -static-libgcc -static-libstdc++ -static
         -Wl,--gc-sections
         -Wl,--undefined=__start_goldie_init_table
         -Wl,--undefined=__stop_goldie_init_table
