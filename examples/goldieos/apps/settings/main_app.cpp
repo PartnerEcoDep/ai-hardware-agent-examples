@@ -324,10 +324,15 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
     switch (event_type) {
         case CONVAI_EV_CONNECTED:
             color = 0x07E0; text = "● 已连接";
+            /* PTT 模式下连接成功时显示"按住说话"按钮 */
+            if (convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_PTT) {
+                ButtonView_ptttalk->setVisible(true);
+            }
             break;
         case CONVAI_EV_DISCONNECTED:
         case CONVAI_EV_FAILED:
             color = 0x0000; text = "● 未连接";
+            ButtonView_ptttalk->setVisible(false);  /* 断开连接时隐藏 PTT 按钮 */
             /* Print uplink/downlink drop stats on disconnect so we can see the
              * quality of this session just before it ended. */
             {
@@ -1613,6 +1618,33 @@ static void init_views(void)
         show_main_page();
     });
 
+    /* 音频模式切换按钮 (AUTO / PTT)
+     * Mode is bound to a session: switching is refused while a session is
+     * active. The user must stop the session first, then switch, then restart. */
+    ButtonView_automode->setOnClick([](void*) {
+        printf("[Settings] Switch to AUTO audio mode\n");
+        if (convai_bridge_set_audio_mode(CONVAI_BRIDGE_AUDIO_AUTO) != 0) {
+            printf("[Settings] AUTO switch refused: session active, stop first\n");
+            return;  /* keep current button selection state */
+        }
+        ButtonView_ptttalk->setVisible(false);
+        ButtonView_automode->setColor(0x3F03);  /* 选中 */
+        ButtonView_pttmode->setColor(0x3CE7);   /* 未选中 */
+        Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+    });
+
+    ButtonView_pttmode->setOnClick([](void*) {
+        printf("[Settings] Switch to PTT audio mode\n");
+        if (convai_bridge_set_audio_mode(CONVAI_BRIDGE_AUDIO_PTT) != 0) {
+            printf("[Settings] PTT switch refused: session active, stop first\n");
+            return;  /* keep current button selection state */
+        }
+        ButtonView_ptttalk->setVisible(true);  /* 显示"按住说话"按钮 */
+        ButtonView_automode->setColor(0x3CE7);  /* 未选中 */
+        ButtonView_pttmode->setColor(0x3F03);   /* 选中 */
+        Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+    });
+
     ButtonView_cancle17->setOnClick([](void*) {
 		 log_wifi_operation("从APIKEY页面返回");
 		 show_cloud_page();
@@ -1757,6 +1789,29 @@ SpinnerView_sle_mode->setOnItemSelect([](int index, const char* text) {
 
 static void goldie_touch_event(int pressure, int x, int y)
 {
+    /* PTT 按钮触摸拦截 - 在 cloud 页且 PTT 模式下处理 */
+    if (FrameView_cloud->isVisible() &&
+        convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_PTT &&
+        ButtonView_ptttalk->isVisible()) {
+        /* 触摸检测区域比视觉按钮大一些，方便按压 (128, 186), 152x40 */
+        if (x >= 128 && x <= 128 + 152 && y >= 186 && y <= 186 + 40) {
+            if (pressure == 1) {
+                /* 按下 */
+                printf("[PTT] button pressed\n");
+                convai_bridge_ptt_press();
+                ButtonView_ptttalk->setText("松开结束");
+                Window_main->flush(128, 186, 152, 40);
+            } else if (pressure == 0) {
+                /* 释放 */
+                printf("[PTT] button released\n");
+                convai_bridge_ptt_release();
+                ButtonView_ptttalk->setText("按住说话");
+                Window_main->flush(128, 186, 152, 40);
+            }
+            return; /* 已处理，不再传递给 Window_main */
+        }
+    }
+
     Window_main->handleEvent(pressure, x, y);
 }
 

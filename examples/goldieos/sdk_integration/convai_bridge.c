@@ -275,6 +275,7 @@ int convai_bridge_restart(void)
 convai_engine_t convai_bridge_get_engine(void)     { return g_engine; }
 convai_status_e convai_bridge_get_status(void)     { return g_status; }
 int convai_bridge_is_speaking(void)                { return (g_status == CONVAI_STATUS_ANSWERING); }
+int convai_bridge_is_started(void)                 { return g_started; }
 
 int convai_bridge_get_uplink_stats(unsigned int *frames_sent,
                                    unsigned int *frames_dropped)
@@ -294,6 +295,19 @@ int convai_bridge_send_audio(const uint8_t *data, size_t len,
 {
     return bridge_uplink_send(data, len, info);
 }
+
+/* ---- Audio mode / PTT (forwarded to uplink module) ---- */
+int convai_bridge_set_audio_mode(convai_bridge_audio_mode_t mode)
+{
+    return bridge_uplink_set_audio_mode(mode);
+}
+convai_bridge_audio_mode_t convai_bridge_get_audio_mode(void)
+{
+    return bridge_uplink_get_audio_mode();
+}
+void convai_bridge_ptt_press(void)   { bridge_uplink_ptt_press(); }
+void convai_bridge_ptt_release(void) { bridge_uplink_ptt_release(); }
+int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed(); }
 
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
