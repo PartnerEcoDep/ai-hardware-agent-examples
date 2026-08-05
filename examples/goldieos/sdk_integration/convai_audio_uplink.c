@@ -7,6 +7,7 @@
  */
 #include "convai_audio_internal.h"
 #include "convai_audio_dump.h"
+#include "convai_audio_diag.h"
 #include "convai_codec_g711a.h"
 #include "audio_service.h"
 #include "goldie_osal.h"
@@ -43,6 +44,7 @@ const audio_hw_info_t *bridge_get_audio_hw(void)
     return (const audio_hw_info_t *)&g_audio_src;
 }
 
+
 /* Process one mic frame: read → stereo-to-planar → G.711A encode → send.
  * Returns 1 if a frame was successfully sent, 0 if no data / encode failed /
  * send dropped. The static buffers are safe because the recording thread is
@@ -56,11 +58,16 @@ static int capture_one_frame(audio_source_t *s, AudioService *audio)
 
     int len = audio->audio_read(buf, AUDIO_RECORD_BUF_SIZE);
     if (len <= 0) {
+        audio_diag_update(audio, NULL, 0, 0);  /* log the no-data frame */
         goldie_msleep(10);  /* no data: yield */
         return 0;
     }
     bridge_dump_write(buf, (size_t)len);
-    /* Stereo interleaved → planar [L...] [R...] for cloud AEC. */
+    /* Deinterleave to planar [L(n).. R(n)..].
+     *   L : mic signal (sent to cloud).
+     *   R : WS63 = speaker playback (AEC echo-reference, captured by the mic
+     *       hardware so the cloud can cancel playback echo); Win = forced 0
+     *       (no AEC ref on the simulator). */
     int sample_count = len / (int)sizeof(short);
     int frame_count = sample_count / 2;
     int16_t *samples = (int16_t *)buf;
@@ -73,6 +80,9 @@ static int capture_one_frame(audio_source_t *s, AudioService *audio)
         planar_samples[frame_count + i] = 0;
 #endif
     }
+    /* Diagnostics: read-only metrics over the planar buffer (rmsL/rmsR/dc/zeros)
+     * + vad_detect probe. Does not touch planar_buf/g711_buf or the encode path. */
+    audio_diag_update(audio, planar_samples, (size_t)frame_count, 1);
     size_t g711_len = 0;
     int enc_ret = convai_g711a_encode(planar_buf, (size_t)len, 2,
                                       g711_buf, AUDIO_RECORD_BUF_SIZE,
