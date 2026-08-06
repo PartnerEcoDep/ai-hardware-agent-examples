@@ -1,0 +1,4 @@
+dependencies:
+  espressif/cjson:
+    version: ^1.7.19
+description: AI Hardware Agent main component — WiFi provisioning via esp-wifi-connect
