@@ -8,7 +8,7 @@
  *   - 音频: ES8311 (DAC) + ES7210 (ADC, 3路MIC, 支持AEC)
  *   - IO扩展: PCA9557 @ 0x19 (控制 LCD_CS / PA_EN / DVP_PWDN)
  *   - LCD: ST7789 320x240 SPI (CS 经 PCA9557)
- *   - 触摸: FT5x06 @ I2C
+ *   - 触摸: FT6336 @ I2C (用户板为 FT6336, 非旧参考的 FT5x06)
  *   - 摄像头: GC0308 (DVP 接口)
  *   - 姿态: QMI8658 @ 0x6A (I2C)
  *   - LED: GPIO48
