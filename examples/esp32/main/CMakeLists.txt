@@ -7,6 +7,9 @@ idf_component_register(
         "convai_platform_esp32.c"
         "pca9557.c"
         "audio_codec_lckfb.c"
+        "wifi_provisioning.cpp"
+        "lcd_ui.c"
+        "wifi_prov_ui.c"
     INCLUDE_DIRS
         "."
         "${CMAKE_SOURCE_DIR}/../../include/convai"
@@ -16,6 +19,7 @@ idf_component_register(
         esp_netif
         esp_event
         esp_timer
+        esp_http_server
         esp_https_ota
         driver
         esp_driver_i2s          # I2S 音频接口
@@ -25,5 +29,6 @@ idf_component_register(
         esp_lcd                 # ST7789 LCD 驱动
         mbedtls
         lwip
+        esp-wifi-connect
         convai_sdk_stub          # ★ STUB — 正式 SDK 到位后改回 convai_sdk
 )
