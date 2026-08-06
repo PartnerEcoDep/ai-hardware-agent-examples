@@ -308,6 +308,16 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
         COMMENT "Firmware: ${OUTPUT_BIN}"
     )
 
+    add_custom_command(TARGET ws63_firmware POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${OUTPUT_DIR}/goldieos.fwpkg
+            ${OUTPUT_DIR}/goldieos-${PROJECT_VERSION}.fwpkg
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${OUTPUT_DIR}/goldieos.bin
+            ${OUTPUT_DIR}/goldieos-${PROJECT_VERSION}.bin
+        COMMENT "Versioned firmware copy: goldieos-${PROJECT_VERSION}.fwpkg / .bin"
+    )
+
     message(STATUS "GoldieOS WS63 configured. Compiler: ${CMAKE_C_COMPILER}")
 
 
@@ -389,6 +399,7 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     # 常规按需链接会被丢弃, 导致程序启动后无初始化动作.
     set(WIN_LINK_LIBS
         -mconsole
+        -static-libgcc -static-libstdc++ -static
         -Wl,--gc-sections
         -Wl,--undefined=__start_goldie_init_table
         -Wl,--undefined=__stop_goldie_init_table
@@ -424,6 +435,13 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
             ${CMAKE_CURRENT_SOURCE_DIR}/sdk_integration/convai.cfg.example
             \"$<TARGET_FILE_DIR:goldieos>/convai.cfg\"
         COMMENT "Copying runtime config template (convai.cfg)"
+    )
+
+    add_custom_command(TARGET goldieos POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:goldieos>
+            $<TARGET_FILE_DIR:goldieos>/goldieos-${PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>
+        COMMENT "Versioned artifact copy: goldieos-${PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>"
     )
 
     message(STATUS "GoldieOS WIN simulator configured. Compiler: ${CMAKE_C_COMPILER}")

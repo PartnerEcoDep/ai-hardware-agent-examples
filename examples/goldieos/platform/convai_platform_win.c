@@ -624,7 +624,18 @@ static void win_log(int level, const char *file, int line, const char *fmt, ...)
 }
 
 int win_device_id(char *buf, size_t len) {
-    if (buf == NULL || len < 14) return -1;
+    if (buf == NULL || len < 16) return -1;
+
+    /* 取 NetBIOS 主机名 (Windows 10+ 装机随机生成 15 字符名, 如
+     * "DESKTOP-ABC1234")。比固定串 "goldieos-sim" 更有区分度, 且语义上
+     * 接近 ws63 用 WiFi MAC 做设备标识的意图。GetComputerNameA 由 kernel32
+     * 导出, Windows 恒链接, 无需在 CMake 加库。 */
+    DWORD name_len = (DWORD)len;
+    if (GetComputerNameA(buf, &name_len)) {
+        return (int)strlen(buf);
+    }
+
+    /* 兜底: 取名失败时退回原固定串行为。 */
     snprintf(buf, len, "goldieos-sim");
     return (int)strlen(buf);
 }

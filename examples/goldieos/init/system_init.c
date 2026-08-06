@@ -274,10 +274,16 @@ static int sys_init_Task(void *param){
 #elif defined(PLATFORM_TYPE_WIN)
     /* Desktop simulator (goldieos): register the Windows platform adapter
      * (winsock NetAL + mbedTLS TLSAL + goldie_osal OSAL from libwinvm),
-     * use a fixed device name. */
+     * use the host name as the device name (parallels WS63 using WiFi MAC). */
     extern int convai_platform_win_init(void);
+    extern int win_device_id(char *buf, size_t len);
     convai_platform_win_init();
-    convai_bridge_set_device_name("goldieos-sim");
+    {
+        char dev_id[32] = {0};
+        if (win_device_id(dev_id, sizeof(dev_id)) > 0) {
+            convai_bridge_set_device_name(dev_id);
+        }
+    }
 #endif
 
     convai_bridge_init();
