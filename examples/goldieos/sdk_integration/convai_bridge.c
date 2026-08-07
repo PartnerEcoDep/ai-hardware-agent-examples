@@ -10,6 +10,7 @@
 #include "convai_bridge_defaults.h"
 #include "convai_config_file.h"
 #include "convai_audio_internal.h"
+#include "convai_comfort.h"
 #include "service_manager.h"
 #include "goldie_osal.h"
 
@@ -84,6 +85,9 @@ static void on_status(convai_engine_t e, convai_status_e s, void *ud)
 
     /* Forward to downlink module for playback state machine */
     bridge_downlink_on_status(s);
+
+    /* Forward to comfort module for response-timeout arming */
+    bridge_comfort_on_status(s);
 }
 
 static void on_audio(convai_engine_t e, const void *data, size_t len,
@@ -91,6 +95,9 @@ static void on_audio(convai_engine_t e, const void *data, size_t len,
 {
     (void)e; (void)ud;
     bridge_downlink_on_audio(data, len, info);
+
+    /* TTS audio arrived — cancel any pending comfort timeout */
+    bridge_comfort_on_audio(data, len, info);
 }
 
 static void on_message_data(convai_engine_t e, const void *data, size_t len,
@@ -118,6 +125,7 @@ void convai_bridge_init(void)
 {
     if (g_engine) {
         printf("[convai_bridge] already initialized\n");
+        bridge_comfort_stop();
         return;
     }
 
@@ -226,6 +234,7 @@ static void bridge_setup(void)
 
     bridge_uplink_start();
     bridge_downlink_start();
+    bridge_comfort_start();
 
     g_started = 1;
     g_status  = CONVAI_STATUS_IDLE;
@@ -241,6 +250,7 @@ static void bridge_cleanup(void)
     if (!g_started) return;
 
     bridge_uplink_stop();
+    bridge_comfort_stop();
     bridge_downlink_stop();
 
     g_started = 0;
