@@ -36,6 +36,8 @@
 #include "audio_codec_lckfb.h"
 #include "wifi_provisioning.h"
 #include "wifi_prov_ui.h"
+#include "ai_chat_ui.h"
+#include "voice_config.h"
 
 static const char *TAG = "main";
 
@@ -56,6 +58,30 @@ static audio_lckfb_t           g_audio;
 esp_lcd_panel_handle_t  g_lcd_panel;
 static esp_lcd_panel_io_handle_t g_lcd_io;
 static convai_engine_t         g_engine;
+
+/* ===================================================================
+ *  按键 (GPIO0, 低电平有效) — 轮询 + 长按/短按区分
+ * =================================================================== */
+#define LONG_PRESS_MS  1500    /* 长按阈值 1.5s */
+#define SHORT_MIN_MS   50      /* 消抖 */
+
+static bool     s_btn_was_down     = false;
+static bool     s_long_press_fired = false;
+static TickType_t s_btn_press_tick = 0;
+
+static bool button_is_down(void) {
+    return gpio_get_level(BOARD_BOOT_BUTTON_GPIO) == 0;
+}
+
+static void button_init(void) {
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << BOARD_BOOT_BUTTON_GPIO),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+    };
+    gpio_config(&cfg);
+    ESP_LOGI(TAG, "Button GPIO%d init OK (polling)", BOARD_BOOT_BUTTON_GPIO);
+}
 
 /* ===================================================================
  *  PCA9557 功放回调
@@ -298,7 +324,25 @@ static void sntp_init_sync(void) {
  * =================================================================== */
 static void on_sdk_event(convai_engine_t engine,
                          convai_event_t *event, void *user_data) {
-    ESP_LOGI(TAG, "SDK event: code=%d", event->code);
+    const char *names[] = {
+        [CONVAI_EV_CONNECTED]    = "CONNECTED",
+        [CONVAI_EV_DISCONNECTED] = "DISCONNECTED",
+        [CONVAI_EV_FAILED]       = "FAILED",
+        [CONVAI_EV_UPDATED]      = "UPDATED",
+    };
+    ESP_LOGI(TAG, "SDK event: %s", names[event->code]);
+
+    switch (event->code) {
+    case CONVAI_EV_CONNECTED:
+        ai_chat_ui_set_cloud_connection(true);
+        break;
+    case CONVAI_EV_DISCONNECTED:
+    case CONVAI_EV_FAILED:
+        ai_chat_ui_set_cloud_connection(false);
+        break;
+    default:
+        break;
+    }
 }
 
 static void on_conversation_status(convai_engine_t engine,
@@ -314,9 +358,24 @@ static void on_conversation_status(convai_engine_t engine,
     ESP_LOGI(TAG, "Status: %s", names[status]);
 
     switch (status) {
-    case CONVAI_STATUS_LISTENING:  board_led_set(1); break;
-    case CONVAI_STATUS_THINKING:   board_led_set(1); break;
-    default:                       board_led_set(0); break;
+    case CONVAI_STATUS_LISTENING:
+        board_led_set(1);
+        ai_chat_ui_set_state(CHAT_LISTENING);
+        break;
+    case CONVAI_STATUS_THINKING:
+        board_led_set(1);
+        ai_chat_ui_set_state(CHAT_THINKING);
+        break;
+    case CONVAI_STATUS_ANSWERING:
+        board_led_set(0);
+        ai_chat_ui_set_state(CHAT_SPEAKING);
+        break;
+    case CONVAI_STATUS_IDLE:
+    case CONVAI_STATUS_ANSWER_FINISHED:
+    default:
+        board_led_set(0);
+        ai_chat_ui_set_state(CHAT_IDLE);
+        break;
     }
 }
 
@@ -332,6 +391,12 @@ static void on_message_data(convai_engine_t engine,
                             const convai_message_info_t *info,
                             void *user_data) {
     ESP_LOGI(TAG, "Message: %.*s", (int)len, (const char *)data);
+
+    char *text = strndup((const char *)data, len);
+    if (text) {
+        ai_chat_ui_add_message(text, false);  /* assistant 消息 */
+        free(text);
+    }
 }
 
 /* ===================================================================
@@ -354,6 +419,23 @@ static void audio_capture_task(void *arg) {
     }
     free(buf);
     vTaskDelete(NULL);
+}
+
+/* ===================================================================
+ *  WiFi 事件回调 — 驱动状态栏更新
+ * =================================================================== */
+static void on_wifi_event(wifi_prov_event_t event) {
+    switch (event) {
+    case WIFI_PROV_EV_CONNECTED:
+        ai_chat_ui_set_connection(
+            wifi_prov_get_ssid(),
+            wifi_prov_get_ip(),
+            true);
+        break;
+    case WIFI_PROV_EV_DISCONNECTED:
+        ai_chat_ui_set_connection("", "", false);
+        break;
+    }
 }
 
 /* ===================================================================
@@ -412,6 +494,7 @@ void app_main(void) {
 
     /* WiFi */
     printf("[7/8] WiFi init...\n"); fflush(stdout);
+    wifi_prov_register_callback(on_wifi_event);
     wifi_prov_ui_run();
     printf("[7/8] WiFi OK\n"); fflush(stdout);
 
@@ -441,20 +524,77 @@ void app_main(void) {
         convai_start(g_engine, &opt);
         printf("[8/8] SDK started (v%s)\n", convai_get_version());
         xTaskCreate(audio_capture_task, "audio_cap", 4096, NULL, 5, NULL);
-        lcd_show_status(7);
     }
     fflush(stdout);
 
 skip_hw:
-    printf("\n=== Init complete — entering main loop ===\n");
+    /* AI Chat UI — 配网完成后进入空闲状态 */
+    ai_chat_ui_init();
+
+    /* 音色配置 — 从 NVS 恢复上次选择 */
+    voice_config_init();
+
+    /* 更新状态栏：WiFi 连接信息 */
+    ai_chat_ui_set_connection(
+        wifi_prov_get_ssid(),
+        wifi_prov_get_ip(),
+        wifi_prov_is_connected());
+    printf("AI Chat UI ready (IDLE)\n");
+
+    /* 自定义按键 (GPIO0) 初始化 */
+    button_init();
+
+    printf("\n=== Init complete — press custom key to start AI conversation ===\n");
     gpio_set_level(48, 0);
 
-    int count = 0;
     while (1) {
-        gpio_set_level(48, count % 2);
-        printf("tick %d\n", count++);
-        fflush(stdout);
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        bool down = button_is_down();
+        TickType_t now = xTaskGetTickCount();
+
+        if (down && !s_btn_was_down) {
+            /* 按键刚按下 */
+            s_btn_press_tick = now;
+            s_long_press_fired = false;
+
+        } else if (down && s_btn_was_down) {
+            /* 持续按住 — 长按检测 */
+            if (!s_long_press_fired &&
+                (now - s_btn_press_tick) * portTICK_PERIOD_MS >= LONG_PRESS_MS) {
+
+                s_long_press_fired = true;
+
+                if (ai_chat_ui_get_state() == CHAT_IDLE) {
+                    /* IDLE 长按 → 打开音色面板 */
+                    ESP_LOGI(TAG, "Long press → voice selector");
+                    ai_chat_ui_show_voice_selector(true);
+                } else if (ai_chat_ui_get_state() == CHAT_VOICE_SELECT) {
+                    /* 音色面板内长按 → 确认并关闭 */
+                    int idx = ai_chat_ui_voice_select_get();
+                    ESP_LOGI(TAG, "Voice confirmed: #%d", idx);
+                    voice_config_set(g_engine, idx);
+                    ai_chat_ui_show_voice_selector(false);
+                }
+            }
+
+        } else if (!down && s_btn_was_down) {
+            /* 按键松开 — 短按 */
+            if (!s_long_press_fired &&
+                (now - s_btn_press_tick) * portTICK_PERIOD_MS >= SHORT_MIN_MS) {
+
+                if (ai_chat_ui_get_state() == CHAT_IDLE) {
+                    /* IDLE 短按 → 启动对话 */
+                    ESP_LOGI(TAG, "Short press → start conversation");
+                    ai_chat_ui_set_state(CHAT_LISTENING);
+                } else if (ai_chat_ui_get_state() == CHAT_VOICE_SELECT) {
+                    /* 音色面板内短按 → 下一项 */
+                    ai_chat_ui_voice_select_next();
+                }
+            }
+        }
+
+        s_btn_was_down = down;
+        ai_chat_ui_tick();
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 
 #if 0

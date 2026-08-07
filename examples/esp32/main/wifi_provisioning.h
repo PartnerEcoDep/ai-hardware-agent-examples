@@ -24,6 +24,29 @@ extern "C" {
 #endif
 
 /**
+ * @brief WiFi 连接状态事件
+ */
+typedef enum {
+    WIFI_PROV_EV_CONNECTED,     /**< WiFi 已连接 */
+    WIFI_PROV_EV_DISCONNECTED,  /**< WiFi 已断开 */
+} wifi_prov_event_t;
+
+/**
+ * @brief WiFi 事件回调类型
+ */
+typedef void (*wifi_prov_callback_t)(wifi_prov_event_t event);
+
+/**
+ * @brief 注册 WiFi 状态变化回调（必须在 wifi_prov_init() 之前调用）
+ *
+ * 当 WiFi 连接/断开时，回调将被立即调用（在 WiFi 事件线程上下文中）。
+ * 允许多次调用覆盖，只保留最后一个回调。
+ *
+ * @param cb 回调函数指针，传 NULL 取消注册
+ */
+void wifi_prov_register_callback(wifi_prov_callback_t cb);
+
+/**
  * @brief 初始化 WiFi 配网
  *
  * 初始化 NVS、TCP/IP 协议栈和 WifiManager，
