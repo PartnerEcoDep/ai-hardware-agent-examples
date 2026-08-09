@@ -615,9 +615,6 @@ void app_main(void)
     /* WiFi */
     printf("[7/8] WiFi init...\n");
     fflush(stdout);
-    /* ? ?on_wifi_event ? ?LVGL ?
-    ai_chat_ui_set_connection() ? LVGL ?ai_chat_ui_init() ?
-    WiFi ? LVGL ?*/
     wifi_prov_ui_run();
     printf("[7/8] WiFi OK\n");
     fflush(stdout);
