@@ -60,13 +60,14 @@ file(GLOB COMMON_SERVICE_SRC
     services/aud_algo/*.c
 )
 
-# SDK integration (replaces cloud_service)
+# SDK integration (replaces cloud_service) — platform/app-agnostic glue
 file(GLOB COMMON_SDK_INTEGRATION_SRC sdk_integration/*.c)
 
 # App sources
 file(GLOB COMMON_APP_SRC
     apps/launcher/*.cpp
     apps/settings/*.cpp
+    apps/settings/*.c
     apps/alarm/*.cpp
     apps/animaton_player/*.cpp
     # apps/recorder/*.cpp
