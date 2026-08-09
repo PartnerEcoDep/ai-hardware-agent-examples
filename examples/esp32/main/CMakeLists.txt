@@ -11,6 +11,7 @@ idf_component_register(
         "lcd_ui.c"
         "wifi_prov_ui.c"
         "ai_chat_ui.c"
+        "lvgl_port.c"
         "voice_config.c"
     INCLUDE_DIRS
         "."
@@ -29,6 +30,8 @@ idf_component_register(
         esp_driver_spi          # SPI (LCD)
         esp_driver_i2c          # I2C (Codec / PCA9557)
         esp_lcd                 # ST7789 LCD 驱动
+        lvgl                    # LVGL 图形库
+        esp_lvgl_port           # LVGL ESP-IDF 移植层
         mbedtls
         lwip
         esp-wifi-connect

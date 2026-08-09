@@ -1,4 +1,10 @@
 dependencies:
   espressif/cjson:
     version: ^1.7.19
+  lvgl/lvgl:
+    version: ^9.2
+  espressif/esp_lvgl_port:
+    version: ^2.5
+  espressif/esp_lcd_touch_ft5x06:
+    version: ^1.1
 description: AI Hardware Agent main component — WiFi provisioning via esp-wifi-connect

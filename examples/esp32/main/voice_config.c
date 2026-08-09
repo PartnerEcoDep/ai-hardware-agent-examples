@@ -25,12 +25,63 @@ static const voice_entry_t s_voices[VOICE_COUNT] = {
 
 static int s_voice_id = 0;  /* 当前音色索引 */
 
+/* ===================================================================
+ *  Gender → voice_id 映射表
+ *  第0维=VOICE_GENDER_FEMALE, 第1维=VOICE_GENDER_MALE, 第2维=VOICE_GENDER_ROBOT
+ * =================================================================== */
+static const int s_gender_voices[VOICE_GENDER_COUNT][6] = {
+    { 0, 1, 2, 8, -1, -1 },  /* female: Warm/Bashful/Hearted/Cute */
+    { 3, 4, 5, 6, 7, -1 },   /* male:   Elder/Gentleman/Humorous/Stubborn/Pure */
+    { 9, -1, -1, -1, -1, -1 }, /* robot */
+};
+
+static const char *s_gender_names[VOICE_GENDER_COUNT] = {
+    "Female",
+    "Male",
+    "Robot",
+};
+
 const voice_entry_t *voice_config_get_list(void) {
     return s_voices;
 }
 
 int voice_config_count(void) {
     return VOICE_COUNT;
+}
+
+voice_gender_t voice_config_get_gender(int voice_id) {
+    for (int g = 0; g < VOICE_GENDER_COUNT; g++) {
+        for (int i = 0; i < 6 && s_gender_voices[g][i] >= 0; i++) {
+            if (s_gender_voices[g][i] == voice_id) return (voice_gender_t)g;
+        }
+    }
+    return VOICE_GENDER_FEMALE;
+}
+
+const char *voice_config_get_gender_name(voice_gender_t gender) {
+    if (gender < 0 || gender >= VOICE_GENDER_COUNT) return "Unknown";
+    return s_gender_names[gender];
+}
+
+int voice_config_get_gender_voice_count(voice_gender_t gender) {
+    if (gender < 0 || gender >= VOICE_GENDER_COUNT) return 0;
+    int cnt = 0;
+    while (cnt < 6 && s_gender_voices[gender][cnt] >= 0) cnt++;
+    return cnt;
+}
+
+const char *voice_config_get_gender_voice_name(voice_gender_t gender, int idx) {
+    if (gender < 0 || gender >= VOICE_GENDER_COUNT) return "?";
+    if (idx < 0 || idx >= 6) return "?";
+    int vid = s_gender_voices[gender][idx];
+    if (vid < 0) return "?";
+    return s_voices[vid].name;
+}
+
+int voice_config_get_gender_voice_id(voice_gender_t gender, int idx) {
+    if (gender < 0 || gender >= VOICE_GENDER_COUNT) return -1;
+    if (idx < 0 || idx >= 6) return -1;
+    return s_gender_voices[gender][idx];
 }
 
 /* ---- NVS ---- */

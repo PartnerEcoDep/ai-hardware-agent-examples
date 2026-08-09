@@ -1,633 +1,1009 @@
 /**
  * @file ai_chat_ui.c
- * @brief AI 对话界面 — 实现
+ * @brief AI Chat UI - Voice Assistant style (LVGL 9.x, Google C style)
  *
- * 基于 lcd_ui 模块（8×16 ASCII 字体 + 2x 缩放 + 圆角矩形）。
- * 消息环形缓冲最多 8 条，屏幕显示最近 3~4 条。
+ * Layout (320x240):
+ *   [0..40]    status bar: dot + text / WiFi icon
+ *   [50..170]  center voice orb (5 states, 80~120 px)
+ *   [180..195] state label (16px, centered)
+ *   [200..220] hint label  (16px, centered)
  */
 
 #include "ai_chat_ui.h"
-
-#include <string.h>
-#include <stdio.h>
-#include <math.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-
-#include "lcd_ui.h"
 #include "voice_config.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "esp_log.h"
+#include "lvgl.h"
 
 static const char *TAG = "ai_chat_ui";
 
-/* ---- 颜色定义 ---- */
-#define COLOR_BG             0x0000  /* 纯黑 */
-#define COLOR_WHITE          0xFFFF
-#define COLOR_CYAN           0x07FF  /* AI 气泡 */
-#define COLOR_USER_BUBBLE    0x18E3  /* 用户气泡（深灰蓝） */
-#define COLOR_GRAY           0x8410
-#define COLOR_GREEN          0x07E0
-#define COLOR_RED            0xF800
+#define FONT_CJK_16  (&lv_font_source_han_sans_sc_16_cjk)
+#define FONT_CJK_14  (&lv_font_source_han_sans_sc_14_cjk)
 
-/* ---- 布局常量 ---- */
-#define STATUS_BAR_Y         0
-#define STATUS_BAR_H         24
-#define CHAT_AREA_TOP        24
-#define CHAT_AREA_BOTTOM     184
-#define STATUS_AREA_Y        188
-#define BUBBLE_MARGIN        8
-#define BUBBLE_PAD_X         6
-#define BUBBLE_PAD_Y         4
-#define BUBBLE_R             6
-#define AI_MAX_CHARS         30
-#define USER_MAX_CHARS       28
-#define MSG_BUF_SIZE         8
-#define MSG_MAX_LEN          128
-#define MAX_VISIBLE_MSGS     4
+/* color palette (dark theme) */
+#define C_BG          lv_color_hex(0x000000)
+#define C_TEXT        lv_color_hex(0xFFFFFF)
+#define C_TEXT_GRAY   lv_color_hex(0x9CA3AF)
+#define C_GREEN       lv_color_hex(0x00E676)
+#define C_GREEN_DIM   lv_color_hex(0x007A3A)
+#define C_BLUE        lv_color_hex(0x3B82F6)
+#define C_BLUE_DIM    lv_color_hex(0x1E3A8A)
+#define C_PURPLE      lv_color_hex(0xA855F7)
+#define C_PURPLE_DIM  lv_color_hex(0x581C87)
+#define C_RED         lv_color_hex(0xFF5252)
 
-/* ---- 消息缓冲 ---- */
+#define ORB_CX  160
+#define ORB_CY  110
+
 typedef struct {
-    char text[MSG_MAX_LEN];
-    bool is_user;
-} chat_msg_t;
+  lv_obj_t *ring_outer;
+  lv_obj_t *ring_mid;
+  lv_obj_t *core;
+} idle_viz_t;
 
-static chat_msg_t s_msg_buf[MSG_BUF_SIZE];
-static int s_msg_head = 0;       /* 最旧消息索引 */
-static int s_msg_count = 0;      /* 缓冲中消息数 */
+typedef struct {
+  lv_obj_t *circle;
+  lv_obj_t *icon_mic;
+  lv_obj_t *icon_stand;
+  lv_obj_t *icon_base;
+  lv_obj_t *bars_l[5];
+  lv_obj_t *bars_r[5];
+  lv_anim_t anims_l[5];
+  lv_anim_t anims_r[5];
+} listening_viz_t;
+
+typedef struct {
+  lv_obj_t *circle;
+  lv_obj_t *icon_speaker;
+  lv_obj_t *wave_arcs[3];
+} speaking_viz_t;
+
+typedef struct {
+  lv_obj_t *circle;
+  lv_obj_t *spin_arc;
+  lv_obj_t *static_arc;
+} thinking_viz_t;
+
+typedef struct {
+  lv_obj_t *circle;
+  lv_obj_t *bar1;
+  lv_obj_t *bar2;
+} disconnected_viz_t;
+
+typedef struct {
+  lv_obj_t *panel;
+  lv_obj_t *title_label;
+  lv_obj_t *left_bg;
+  lv_obj_t *right_bg;
+  lv_obj_t *gender_labels[VOICE_GENDER_COUNT];
+  lv_obj_t *timbre_labels[6];  /* max 6 per gender */
+  lv_obj_t *btn_cancel;
+  lv_obj_t *btn_confirm;
+  lv_obj_t *cancel_label;
+  lv_obj_t *confirm_label;
+  int       timbre_count;
+  int       gender_idx;
+  int       timbre_idx;
+} voice_select_viz_t;
+
+static struct {
+  lv_obj_t *status_dot;
+  lv_obj_t *status_label;
+
+  idle_viz_t         idle;
+  listening_viz_t    listening;
+  speaking_viz_t     speaking;
+  thinking_viz_t     thinking;
+  disconnected_viz_t disconnected;
+  voice_select_viz_t voice_sel;
+
+  lv_obj_t *state_label;
+  lv_obj_t *hint_label;
+  lv_obj_t *float_ball;
+  lv_obj_t *float_ball_label;
+} ui;
+
 static chat_state_t s_state = CHAT_IDLE;
-static int s_anim_frame = 0;     /* 动画帧计数 */
-
-/* ---- 连接状态 ---- */
-static char s_ssid[32] = "";
-static char s_ip[32] = "";
-static bool s_connected = false;
-static bool s_cloud_connected = false;
-
-/* ---- 音色选择面板 ---- */
-static bool s_voice_sel_open = false;
-static int  s_voice_sel_idx = 0;    /* 当前高亮音色 0~9 */
-
-/* ---- 内部函数声明 ---- */
-static void render_all(void);
-static int wrap_text(const char *text, int max_chars,
-                     char lines[][32], int max_lines);
-static void draw_bubble(int x, int y, const char *text, bool is_user,
-                         int *height_out);
-static void draw_status_bar(void);
-static void draw_status_area(void);
-static void draw_idle_capsules(void);
-static void draw_listening_capsules(void);
-static void draw_speaking_waves(void);
-static void draw_voice_selector(void);
+static uint8_t s_volume = 0;
 
 /* ===================================================================
- *  公开 API
+ *  animation callbacks
+ * =================================================================== */
+
+static void anim_pulse_size_cb(void *var, int32_t v) {
+  lv_obj_set_size((lv_obj_t *)var, v, v);
+}
+
+/* animate size AND re-center (for orb-anchored objects) */
+static void anim_pulse_centered_cb(void *var, int32_t v) {
+  lv_obj_t *obj = (lv_obj_t *)var;
+  lv_obj_set_size(obj, v, v);
+  lv_obj_set_pos(obj, ORB_CX - v / 2, ORB_CY - v / 2);
+  lv_obj_set_style_radius(obj, v / 2, 0);
+}
+
+static void anim_pulse_opa_cb(void *var, int32_t v) {
+  lv_obj_set_style_opa((lv_obj_t *)var, v, 0);
+}
+
+static void anim_bar_h_cb(void *var, int32_t v) {
+  lv_obj_set_height((lv_obj_t *)var, v);
+}
+
+static void anim_arc_rotate_cb(void *var, int32_t v) {
+  lv_arc_set_rotation((lv_obj_t *)var, v);
+}
+
+static inline void pos_centered(lv_obj_t *obj, lv_coord_t cx,
+                                lv_coord_t cy) {
+  lv_obj_set_pos(obj, cx - lv_obj_get_width(obj) / 2,
+                 cy - lv_obj_get_height(obj) / 2);
+}
+
+static void show_obj(lv_obj_t *o) {
+  if (o) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void hide_obj(lv_obj_t *o) {
+  if (o) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void anim_init_bar(lv_anim_t *a, lv_obj_t *bar, int min_h,
+                          int max_h, uint32_t dur) {
+  lv_anim_init(a);
+  lv_anim_set_var(a, bar);
+  lv_anim_set_exec_cb(a, anim_bar_h_cb);
+  lv_anim_set_values(a, min_h, max_h);
+  lv_anim_set_duration(a, dur);
+  lv_anim_set_playback_duration(a, dur);
+  lv_anim_set_repeat_count(a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(a, lv_anim_path_ease_in_out);
+}
+
+/* ===================================================================
+ *  top bar  (y 0..40)
+ * =================================================================== */
+
+static void create_top_bar(void) {
+  ui.status_dot = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.status_dot, 8, 8);
+  lv_obj_set_pos(ui.status_dot, 16, 16);
+  lv_obj_set_style_bg_color(ui.status_dot, C_GREEN, 0);
+  lv_obj_set_style_bg_opa(ui.status_dot, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.status_dot, 4, 0);
+  lv_obj_set_style_border_width(ui.status_dot, 0, 0);
+
+  ui.status_label = lv_label_create(lv_screen_active());
+  lv_label_set_text(ui.status_label, "Online");
+  lv_obj_set_pos(ui.status_label, 30, 11);
+  lv_obj_set_style_text_color(ui.status_label, C_TEXT, 0);
+  lv_obj_set_style_text_font(ui.status_label, &lv_font_montserrat_14, 0);
+
+  /* WiFi — plain text, CJK font has no FontAwesome symbols */
+  lv_obj_t *wifi_icon = lv_label_create(lv_screen_active());
+  lv_label_set_text(wifi_icon, "WiFi");
+  lv_obj_set_pos(wifi_icon, 290, 10);
+  lv_obj_set_style_text_color(wifi_icon, C_TEXT, 0);
+  lv_obj_set_style_text_font(wifi_icon, FONT_CJK_14, 0);
+}
+
+/* ===================================================================
+ *  IDLE  -  green center dot + breathing outer ring
+ * =================================================================== */
+
+static void create_idle_viz(void) {
+  /* outer ring — border circle (lv_obj, not lv_arc, for reliable ESP32 rendering) */
+  ui.idle.ring_outer = lv_obj_create(lv_screen_active());
+  lv_obj_remove_style_all(ui.idle.ring_outer);
+  lv_obj_set_size(ui.idle.ring_outer, 110, 110);
+  lv_obj_set_pos(ui.idle.ring_outer, ORB_CX - 55, ORB_CY - 55);
+  lv_obj_set_style_radius(ui.idle.ring_outer, 55, 0);
+  lv_obj_set_style_bg_opa(ui.idle.ring_outer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui.idle.ring_outer, 2, 0);
+  lv_obj_set_style_border_color(ui.idle.ring_outer, C_GREEN_DIM, 0);
+  lv_obj_set_style_border_opa(ui.idle.ring_outer, LV_OPA_40, 0);
+
+  /* mid ring — border circle */
+  ui.idle.ring_mid = lv_obj_create(lv_screen_active());
+  lv_obj_remove_style_all(ui.idle.ring_mid);
+  lv_obj_set_size(ui.idle.ring_mid, 86, 86);
+  lv_obj_set_pos(ui.idle.ring_mid, ORB_CX - 43, ORB_CY - 43);
+  lv_obj_set_style_radius(ui.idle.ring_mid, 43, 0);
+  lv_obj_set_style_bg_opa(ui.idle.ring_mid, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ui.idle.ring_mid, 2, 0);
+  lv_obj_set_style_border_color(ui.idle.ring_mid, C_GREEN, 0);
+  lv_obj_set_style_border_opa(ui.idle.ring_mid, LV_OPA_70, 0);
+
+  /* core — filled circle + shadow */
+  ui.idle.core = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.idle.core, 22, 22);
+  pos_centered(ui.idle.core, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.idle.core, C_GREEN, 0);
+  lv_obj_set_style_bg_opa(ui.idle.core, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.idle.core, 11, 0);
+  lv_obj_set_style_border_width(ui.idle.core, 0, 0);
+  lv_obj_set_style_shadow_color(ui.idle.core, C_GREEN, 0);
+  lv_obj_set_style_shadow_width(ui.idle.core, 16, 0);
+  lv_obj_set_style_shadow_opa(ui.idle.core, LV_OPA_60, 0);
+
+  /* outer ring breathing (size + opacity, centered) */
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.idle.ring_outer);
+  lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+  lv_anim_set_values(&a, 110, 128);
+  lv_anim_set_duration(&a, 2000);
+  lv_anim_set_playback_duration(&a, 2000);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.idle.ring_outer);
+  lv_anim_set_exec_cb(&a, anim_pulse_opa_cb);
+  lv_anim_set_values(&a, LV_OPA_70, LV_OPA_10);
+  lv_anim_set_duration(&a, 2000);
+  lv_anim_set_playback_duration(&a, 2000);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+
+  /* core breathing */
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.idle.core);
+  lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+  lv_anim_set_values(&a, 22, 26);
+  lv_anim_set_duration(&a, 1500);
+  lv_anim_set_playback_duration(&a, 1500);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+}
+
+/* ===================================================================
+ *  LISTENING  -  blue + mic + 5+5 waveform bars
+ * =================================================================== */
+
+static void create_listening_viz(void) {
+  ui.listening.circle = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.listening.circle, 80, 80);
+  pos_centered(ui.listening.circle, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.listening.circle, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(ui.listening.circle, LV_OPA_20, 0);
+  lv_obj_set_style_border_width(ui.listening.circle, 3, 0);
+  lv_obj_set_style_border_color(ui.listening.circle, C_BLUE, 0);
+  lv_obj_set_style_border_opa(ui.listening.circle, LV_OPA_60, 0);
+  lv_obj_set_style_radius(ui.listening.circle, 40, 0);
+  lv_obj_set_style_shadow_color(ui.listening.circle, C_BLUE, 0);
+  lv_obj_set_style_shadow_width(ui.listening.circle, 20, 0);
+  lv_obj_set_style_shadow_opa(ui.listening.circle, LV_OPA_40, 0);
+
+  /* mic body */
+  ui.listening.icon_mic = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.listening.icon_mic, 14, 22);
+  lv_obj_set_pos(ui.listening.icon_mic, ORB_CX - 7, ORB_CY - 24);
+  lv_obj_set_style_bg_color(ui.listening.icon_mic, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(ui.listening.icon_mic, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.listening.icon_mic, 7, 0);
+  lv_obj_set_style_border_width(ui.listening.icon_mic, 0, 0);
+
+  /* mic stand (half arc via lv_obj border, avoid lv_arc ESP32 bug) */
+  ui.listening.icon_stand = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.listening.icon_stand, 24, 12);
+  lv_obj_set_pos(ui.listening.icon_stand, ORB_CX - 12, ORB_CY + 2);
+  lv_obj_set_style_bg_opa(ui.listening.icon_stand, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_color(ui.listening.icon_stand, C_BLUE, 0);
+  lv_obj_set_style_border_width(ui.listening.icon_stand, 2, 0);
+  lv_obj_set_style_border_opa(ui.listening.icon_stand, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.listening.icon_stand, 24, 0);
+  lv_obj_set_style_bg_opa(ui.listening.icon_stand, LV_OPA_TRANSP, LV_PART_MAIN);
+  /* draw only top border: zero out left/right/bottom */
+  lv_obj_set_style_border_side(ui.listening.icon_stand,
+                                LV_BORDER_SIDE_TOP, 0);
+
+  /* mic base */
+  ui.listening.icon_base = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.listening.icon_base, 18, 2);
+  lv_obj_set_pos(ui.listening.icon_base, ORB_CX - 9, ORB_CY + 12);
+  lv_obj_set_style_bg_color(ui.listening.icon_base, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(ui.listening.icon_base, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.listening.icon_base, 1, 0);
+  lv_obj_set_style_border_width(ui.listening.icon_base, 0, 0);
+
+  /* 5+5 waveform bars (default heights) */
+  static const int xs_l[5] = {
+    ORB_CX - 75, ORB_CX - 67, ORB_CX - 59, ORB_CX - 51, ORB_CX - 43
+  };
+  static const int xs_r[5] = {
+    ORB_CX + 40, ORB_CX + 48, ORB_CX + 56, ORB_CX + 64, ORB_CX + 72
+  };
+  static const int default_h[5] = { 8, 16, 26, 18, 10 };
+  for (int i = 0; i < 5; i++) {
+    ui.listening.bars_l[i] = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(ui.listening.bars_l[i], 3, default_h[i]);
+    lv_obj_set_pos(ui.listening.bars_l[i], xs_l[i],
+                   ORB_CY - default_h[i] / 2);
+    lv_obj_set_style_bg_color(ui.listening.bars_l[i], C_BLUE, 0);
+    lv_obj_set_style_bg_opa(ui.listening.bars_l[i], LV_OPA_80, 0);
+    lv_obj_set_style_radius(ui.listening.bars_l[i], 1, 0);
+    lv_obj_set_style_border_width(ui.listening.bars_l[i], 0, 0);
+    anim_init_bar(&ui.listening.anims_l[i], ui.listening.bars_l[i],
+                  4, default_h[i], 500 + i * 80);
+    lv_anim_start(&ui.listening.anims_l[i]);
+
+    ui.listening.bars_r[i] = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(ui.listening.bars_r[i], 3, default_h[i]);
+    lv_obj_set_pos(ui.listening.bars_r[i], xs_r[i],
+                   ORB_CY - default_h[i] / 2);
+    lv_obj_set_style_bg_color(ui.listening.bars_r[i], C_BLUE, 0);
+    lv_obj_set_style_bg_opa(ui.listening.bars_r[i], LV_OPA_80, 0);
+    lv_obj_set_style_radius(ui.listening.bars_r[i], 1, 0);
+    lv_obj_set_style_border_width(ui.listening.bars_r[i], 0, 0);
+    anim_init_bar(&ui.listening.anims_r[i], ui.listening.bars_r[i],
+                  4, default_h[i], 500 + i * 80);
+    lv_anim_start(&ui.listening.anims_r[i]);
+  }
+
+  /* circle breathing */
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.listening.circle);
+  lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+  lv_anim_set_values(&a, 80, 88);
+  lv_anim_set_duration(&a, 1500);
+  lv_anim_set_playback_duration(&a, 1500);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+}
+
+/* ===================================================================
+ *  SPEAKING  -  purple + speaker + 3 expanding rings
+ * =================================================================== */
+
+static void create_speaking_viz(void) {
+  ui.speaking.circle = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.speaking.circle, 80, 80);
+  pos_centered(ui.speaking.circle, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.speaking.circle, C_PURPLE, 0);
+  lv_obj_set_style_bg_opa(ui.speaking.circle, LV_OPA_20, 0);
+  lv_obj_set_style_border_width(ui.speaking.circle, 3, 0);
+  lv_obj_set_style_border_color(ui.speaking.circle, C_PURPLE, 0);
+  lv_obj_set_style_border_opa(ui.speaking.circle, LV_OPA_60, 0);
+  lv_obj_set_style_radius(ui.speaking.circle, 40, 0);
+  lv_obj_set_style_shadow_color(ui.speaking.circle, C_PURPLE, 0);
+  lv_obj_set_style_shadow_width(ui.speaking.circle, 20, 0);
+  lv_obj_set_style_shadow_opa(ui.speaking.circle, LV_OPA_40, 0);
+
+  /* speaker body (24x16 rounded rect) */
+  ui.speaking.icon_speaker = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.speaking.icon_speaker, 24, 16);
+  lv_obj_set_pos(ui.speaking.icon_speaker, ORB_CX - 12, ORB_CY - 8);
+  lv_obj_set_style_bg_color(ui.speaking.icon_speaker, C_PURPLE, 0);
+  lv_obj_set_style_bg_opa(ui.speaking.icon_speaker, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.speaking.icon_speaker, 3, 0);
+  lv_obj_set_style_border_width(ui.speaking.icon_speaker, 0, 0);
+
+  static const int wave_sizes[3] = { 96, 110, 124 };
+  for (int i = 0; i < 3; i++) {
+    int s = wave_sizes[i];
+    ui.speaking.wave_arcs[i] = lv_arc_create(lv_screen_active());
+    lv_obj_set_size(ui.speaking.wave_arcs[i], s, s);
+    pos_centered(ui.speaking.wave_arcs[i], ORB_CX, ORB_CY);
+    lv_arc_set_bg_angles(ui.speaking.wave_arcs[i], 0, 360);
+    lv_obj_set_style_arc_width(ui.speaking.wave_arcs[i], 2, 0);
+    lv_obj_set_style_arc_color(ui.speaking.wave_arcs[i], C_PURPLE, 0);
+    lv_obj_remove_style(ui.speaking.wave_arcs[i], NULL, LV_PART_KNOB);
+
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ui.speaking.wave_arcs[i]);
+    lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+    lv_anim_set_values(&a, s, s + 16);
+    lv_anim_set_duration(&a, 1200);
+    lv_anim_set_playback_duration(&a, 1200);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_delay(&a, i * 400);
+    lv_anim_start(&a);
+
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ui.speaking.wave_arcs[i]);
+    lv_anim_set_exec_cb(&a, anim_pulse_opa_cb);
+    lv_anim_set_values(&a, LV_OPA_70, LV_OPA_10);
+    lv_anim_set_duration(&a, 1200);
+    lv_anim_set_playback_duration(&a, 1200);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_delay(&a, i * 400);
+    lv_anim_start(&a);
+  }
+}
+
+/* ===================================================================
+ *  THINKING  -  purple + rotating arc
+ * =================================================================== */
+
+static void create_thinking_viz(void) {
+  ui.thinking.circle = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.thinking.circle, 80, 80);
+  pos_centered(ui.thinking.circle, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.thinking.circle, C_PURPLE, 0);
+  lv_obj_set_style_bg_opa(ui.thinking.circle, LV_OPA_20, 0);
+  lv_obj_set_style_border_width(ui.thinking.circle, 0, 0);
+  lv_obj_set_style_radius(ui.thinking.circle, 40, 0);
+
+  ui.thinking.static_arc = lv_arc_create(lv_screen_active());
+  lv_obj_set_size(ui.thinking.static_arc, 96, 96);
+  pos_centered(ui.thinking.static_arc, ORB_CX, ORB_CY);
+  lv_arc_set_bg_angles(ui.thinking.static_arc, 0, 360);
+  lv_arc_set_value(ui.thinking.static_arc, 0);
+  lv_obj_set_style_arc_width(ui.thinking.static_arc, 4, 0);
+  lv_obj_set_style_arc_color(ui.thinking.static_arc, C_PURPLE_DIM, 0);
+  lv_obj_set_style_arc_opa(ui.thinking.static_arc, LV_OPA_50, 0);
+  lv_obj_remove_style(ui.thinking.static_arc, NULL, LV_PART_KNOB);
+
+  ui.thinking.spin_arc = lv_arc_create(lv_screen_active());
+  lv_obj_set_size(ui.thinking.spin_arc, 96, 96);
+  pos_centered(ui.thinking.spin_arc, ORB_CX, ORB_CY);
+  lv_arc_set_bg_angles(ui.thinking.spin_arc, 0, 90);
+  lv_arc_set_value(ui.thinking.spin_arc, 0);
+  lv_obj_set_style_arc_width(ui.thinking.spin_arc, 4, 0);
+  lv_obj_set_style_arc_color(ui.thinking.spin_arc, C_PURPLE, 0);
+  lv_obj_remove_style(ui.thinking.spin_arc, NULL, LV_PART_KNOB);
+
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.thinking.spin_arc);
+  lv_anim_set_exec_cb(&a, anim_arc_rotate_cb);
+  lv_anim_set_values(&a, 0, 3600);
+  lv_anim_set_duration(&a, 1500);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_linear);
+  lv_anim_start(&a);
+}
+
+/* ===================================================================
+ *  DISCONNECTED  -  red + crossed bars
+ * =================================================================== */
+
+static void create_disconnected_viz(void) {
+  ui.disconnected.circle = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.disconnected.circle, 80, 80);
+  pos_centered(ui.disconnected.circle, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.disconnected.circle, C_RED, 0);
+  lv_obj_set_style_bg_opa(ui.disconnected.circle, LV_OPA_20, 0);
+  lv_obj_set_style_border_width(ui.disconnected.circle, 3, 0);
+  lv_obj_set_style_border_color(ui.disconnected.circle, C_RED, 0);
+  lv_obj_set_style_border_opa(ui.disconnected.circle, LV_OPA_60, 0);
+  lv_obj_set_style_radius(ui.disconnected.circle, 40, 0);
+  lv_obj_set_style_shadow_color(ui.disconnected.circle, C_RED, 0);
+  lv_obj_set_style_shadow_width(ui.disconnected.circle, 20, 0);
+  lv_obj_set_style_shadow_opa(ui.disconnected.circle, LV_OPA_30, 0);
+
+  ui.disconnected.bar1 = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.disconnected.bar1, 36, 4);
+  pos_centered(ui.disconnected.bar1, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.disconnected.bar1, C_RED, 0);
+  lv_obj_set_style_bg_opa(ui.disconnected.bar1, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.disconnected.bar1, 2, 0);
+  lv_obj_set_style_border_width(ui.disconnected.bar1, 0, 0);
+  lv_obj_set_style_transform_pivot_x(ui.disconnected.bar1, 18, 0);
+  lv_obj_set_style_transform_pivot_y(ui.disconnected.bar1, 2, 0);
+  lv_obj_set_style_transform_rotation(ui.disconnected.bar1, 450, 0);
+
+  ui.disconnected.bar2 = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.disconnected.bar2, 36, 4);
+  pos_centered(ui.disconnected.bar2, ORB_CX, ORB_CY);
+  lv_obj_set_style_bg_color(ui.disconnected.bar2, C_RED, 0);
+  lv_obj_set_style_bg_opa(ui.disconnected.bar2, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ui.disconnected.bar2, 2, 0);
+  lv_obj_set_style_border_width(ui.disconnected.bar2, 0, 0);
+  lv_obj_set_style_transform_pivot_x(ui.disconnected.bar2, 18, 0);
+  lv_obj_set_style_transform_pivot_y(ui.disconnected.bar2, 2, 0);
+  lv_obj_set_style_transform_rotation(ui.disconnected.bar2, 1350, 0);
+}
+
+/* ===================================================================
+ *  bottom labels  (state y=180, hint y=204)
+ * =================================================================== */
+
+static void create_bottom_text(void) {
+  ui.state_label = lv_label_create(lv_screen_active());
+  lv_obj_set_size(ui.state_label, 320, 20);
+  lv_obj_set_pos(ui.state_label, 0, 180);
+  lv_label_set_text(ui.state_label, "Idle");
+  lv_obj_set_style_text_color(ui.state_label, C_TEXT, 0);
+  lv_obj_set_style_text_font(ui.state_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_align(ui.state_label, LV_TEXT_ALIGN_CENTER, 0);
+
+  ui.hint_label = lv_label_create(lv_screen_active());
+  lv_obj_set_size(ui.hint_label, 320, 20);
+  lv_obj_set_pos(ui.hint_label, 0, 204);
+  lv_label_set_text(ui.hint_label, "Tap to talk");
+  lv_obj_set_style_text_color(ui.hint_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(ui.hint_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_align(ui.hint_label, LV_TEXT_ALIGN_CENTER, 0);
+}
+
+/* ===================================================================
+ *  visibility helpers
+ * =================================================================== */
+
+static void hide_all_viz(void) {
+  hide_obj(ui.idle.ring_outer);
+  hide_obj(ui.idle.ring_mid);
+  hide_obj(ui.idle.core);
+  hide_obj(ui.listening.circle);
+  hide_obj(ui.listening.icon_mic);
+  hide_obj(ui.listening.icon_stand);
+  hide_obj(ui.listening.icon_base);
+  for (int i = 0; i < 5; i++) {
+    hide_obj(ui.listening.bars_l[i]);
+    hide_obj(ui.listening.bars_r[i]);
+  }
+  hide_obj(ui.speaking.circle);
+  hide_obj(ui.speaking.icon_speaker);
+  for (int i = 0; i < 3; i++) hide_obj(ui.speaking.wave_arcs[i]);
+  hide_obj(ui.thinking.circle);
+  hide_obj(ui.thinking.spin_arc);
+  hide_obj(ui.thinking.static_arc);
+  hide_obj(ui.disconnected.circle);
+  hide_obj(ui.disconnected.bar1);
+  hide_obj(ui.disconnected.bar2);
+  hide_obj(ui.voice_sel.panel);
+  hide_obj(ui.voice_sel.title_label);
+  hide_obj(ui.voice_sel.left_bg);
+  hide_obj(ui.voice_sel.right_bg);
+  for (int i = 0; i < VOICE_GENDER_COUNT; i++) {
+    hide_obj(ui.voice_sel.gender_labels[i]);
+  }
+  for (int i = 0; i < 6; i++) {
+    hide_obj(ui.voice_sel.timbre_labels[i]);
+  }
+}
+
+/* ===================================================================
+ *  voice selector panel (dual-column)
+ * =================================================================== */
+
+/* refresh right-column timbre labels for current gender */
+static void voice_sel_refresh_timbres(void) {
+  voice_select_viz_t *vs = &ui.voice_sel;
+  voice_gender_t gender = (voice_gender_t)vs->gender_idx;
+  vs->timbre_count = voice_config_get_gender_voice_count(gender);
+
+  for (int i = 0; i < 6; i++) {
+    if (i < vs->timbre_count) {
+      const char *name = voice_config_get_gender_voice_name(gender, i);
+      lv_label_set_text(vs->timbre_labels[i], name);
+      lv_obj_set_style_text_color(vs->timbre_labels[i],
+          (i == vs->timbre_idx) ? C_BLUE : C_TEXT_GRAY, 0);
+      show_obj(vs->timbre_labels[i]);
+    } else {
+      hide_obj(vs->timbre_labels[i]);
+    }
+  }
+
+  /* update gender highlight */
+  for (int g = 0; g < VOICE_GENDER_COUNT; g++) {
+    lv_obj_set_style_text_color(vs->gender_labels[g],
+        (g == vs->gender_idx) ? C_BLUE : C_TEXT_GRAY, 0);
+  }
+
+  /* clamp timbre_idx */
+  if (vs->timbre_idx >= vs->timbre_count) vs->timbre_idx = 0;
+}
+
+static void on_gender_click(lv_event_t *e) {
+  lv_obj_t *target = lv_event_get_target_obj(e);
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  ui.voice_sel.gender_idx = idx;
+  ui.voice_sel.timbre_idx = 0;
+  voice_sel_refresh_timbres();
+  (void)target;
+}
+
+static void on_timbre_click(lv_event_t *e) {
+  lv_obj_t *target = lv_event_get_target_obj(e);
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  ui.voice_sel.timbre_idx = idx;
+  voice_sel_refresh_timbres();
+  (void)target;
+}
+
+static void on_voice_sel_cancel(lv_event_t *e) {
+  (void)e;
+  ai_chat_ui_show_voice_selector(false);
+  ai_chat_ui_set_state(CHAT_IDLE);
+}
+
+static void on_voice_sel_confirm(lv_event_t *e) {
+  (void)e;
+  voice_select_viz_t *vs = &ui.voice_sel;
+  voice_gender_t g = (voice_gender_t)vs->gender_idx;
+  int sel = voice_config_get_gender_voice_id(g, vs->timbre_idx);
+  voice_config_set(NULL, sel);
+  ai_chat_ui_show_voice_selector(false);
+  ai_chat_ui_set_state(CHAT_IDLE);
+}
+
+static void create_voice_select_viz(void) {
+  voice_select_viz_t *vs = &ui.voice_sel;
+  const int pw = 230, ph = 140;
+  const int px = ORB_CX - pw / 2, py = ORB_CY - ph / 2;
+
+  /* dark card */
+  vs->panel = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(vs->panel, pw, ph);
+  lv_obj_set_pos(vs->panel, px, py);
+  lv_obj_set_style_bg_color(vs->panel, lv_color_hex(0x18181B), 0);
+  lv_obj_set_style_bg_opa(vs->panel, LV_OPA_90, 0);
+  lv_obj_set_style_border_width(vs->panel, 1, 0);
+  lv_obj_set_style_border_color(vs->panel, lv_color_hex(0x3730A3), 0);
+  lv_obj_set_style_radius(vs->panel, 12, 0);
+  lv_obj_set_style_pad_all(vs->panel, 0, 0);
+
+  /* title */
+  vs->title_label = lv_label_create(vs->panel);
+  lv_label_set_text(vs->title_label, "Voice Select");
+  lv_obj_set_style_text_color(vs->title_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(vs->title_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(vs->title_label, LV_ALIGN_TOP_MID, 0, 6);
+
+  /* left column bg */
+  vs->left_bg = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->left_bg, 80, 76);
+  lv_obj_set_pos(vs->left_bg, 6, 28);
+  lv_obj_set_style_bg_color(vs->left_bg, lv_color_hex(0x0F0F14), 0);
+  lv_obj_set_style_bg_opa(vs->left_bg, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(vs->left_bg, 0, 0);
+  lv_obj_set_style_radius(vs->left_bg, 6, 0);
+  lv_obj_set_style_pad_all(vs->left_bg, 0, 0);
+
+  /* right column bg */
+  vs->right_bg = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->right_bg, 132, 76);
+  lv_obj_set_pos(vs->right_bg, 92, 28);
+  lv_obj_set_style_bg_color(vs->right_bg, lv_color_hex(0x0F0F14), 0);
+  lv_obj_set_style_bg_opa(vs->right_bg, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(vs->right_bg, 0, 0);
+  lv_obj_set_style_radius(vs->right_bg, 6, 0);
+  lv_obj_set_style_pad_all(vs->right_bg, 0, 0);
+
+  /* gender labels (left column) */
+  const int gl_y[VOICE_GENDER_COUNT] = {4, 28, 52};
+  for (int g = 0; g < VOICE_GENDER_COUNT; g++) {
+    vs->gender_labels[g] = lv_label_create(vs->left_bg);
+    lv_label_set_text(vs->gender_labels[g],
+                      voice_config_get_gender_name((voice_gender_t)g));
+    lv_obj_set_style_text_font(vs->gender_labels[g],
+                               &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(vs->gender_labels[g], 10, gl_y[g]);
+    lv_obj_add_flag(vs->gender_labels[g], LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(vs->gender_labels[g], on_gender_click,
+                        LV_EVENT_CLICKED, (void *)(intptr_t)g);
+  }
+
+  /* timbre labels (right column, max 6) */
+  for (int i = 0; i < 6; i++) {
+    vs->timbre_labels[i] = lv_label_create(vs->right_bg);
+    lv_label_set_text(vs->timbre_labels[i], "");
+    lv_obj_set_style_text_font(vs->timbre_labels[i],
+                               &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(vs->timbre_labels[i], 8, 4 + i * 20);
+    lv_obj_add_flag(vs->timbre_labels[i], LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(vs->timbre_labels[i], on_timbre_click,
+                        LV_EVENT_CLICKED, (void *)(intptr_t)i);
+  }
+
+  /* Cancel button */
+  vs->btn_cancel = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->btn_cancel, 70, 24);
+  lv_obj_set_pos(vs->btn_cancel, 30, 110);
+  lv_obj_set_style_bg_color(vs->btn_cancel, lv_color_hex(0x374151), 0);
+  lv_obj_set_style_bg_opa(vs->btn_cancel, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(vs->btn_cancel, 0, 0);
+  lv_obj_set_style_radius(vs->btn_cancel, 4, 0);
+  lv_obj_set_style_pad_all(vs->btn_cancel, 0, 0);
+  lv_obj_add_flag(vs->btn_cancel, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(vs->btn_cancel, on_voice_sel_cancel,
+                      LV_EVENT_CLICKED, NULL);
+  vs->cancel_label = lv_label_create(vs->btn_cancel);
+  lv_label_set_text(vs->cancel_label, "Cancel");
+  lv_obj_set_style_text_color(vs->cancel_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(vs->cancel_label, &lv_font_montserrat_14, 0);
+  lv_obj_center(vs->cancel_label);
+
+  /* Confirm button */
+  vs->btn_confirm = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->btn_confirm, 70, 24);
+  lv_obj_set_pos(vs->btn_confirm, 130, 110);
+  lv_obj_set_style_bg_color(vs->btn_confirm, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(vs->btn_confirm, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(vs->btn_confirm, 0, 0);
+  lv_obj_set_style_radius(vs->btn_confirm, 4, 0);
+  lv_obj_set_style_pad_all(vs->btn_confirm, 0, 0);
+  lv_obj_add_flag(vs->btn_confirm, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(vs->btn_confirm, on_voice_sel_confirm,
+                      LV_EVENT_CLICKED, NULL);
+  vs->confirm_label = lv_label_create(vs->btn_confirm);
+  lv_label_set_text(vs->confirm_label, "Confirm");
+  lv_obj_set_style_text_color(vs->confirm_label, C_TEXT, 0);
+  lv_obj_set_style_text_font(vs->confirm_label, &lv_font_montserrat_14, 0);
+  lv_obj_center(vs->confirm_label);
+
+  /* initial state */
+  vs->gender_idx = 0;
+  vs->timbre_idx = 0;
+  voice_sel_refresh_timbres();
+}
+
+/* ===================================================================
+ *  float ball (voice settings entry, always visible)
+ * =================================================================== */
+
+static void on_float_ball_click(lv_event_t *e) {
+  (void)e;
+  if (s_state == CHAT_VOICE_SELECT) {
+    /* exit without saving */
+    ai_chat_ui_show_voice_selector(false);
+    ai_chat_ui_set_state(CHAT_IDLE);
+  } else {
+    /* enter voice selector */
+    ai_chat_ui_show_voice_selector(true);
+    ai_chat_ui_set_state(CHAT_VOICE_SELECT);
+  }
+}
+
+static void create_float_ball(void) {
+  const int size = 28;
+  const int x = 282, y = 200;
+
+  ui.float_ball = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(ui.float_ball, size, size);
+  lv_obj_set_pos(ui.float_ball, x, y);
+  lv_obj_set_style_bg_color(ui.float_ball,
+                            lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(ui.float_ball, LV_OPA_30, 0);
+  lv_obj_set_style_border_width(ui.float_ball, 1, 0);
+  lv_obj_set_style_border_color(ui.float_ball,
+                                lv_color_hex(0x9CA3AF), 0);
+  lv_obj_set_style_radius(ui.float_ball, size / 2, 0);
+  lv_obj_set_style_pad_all(ui.float_ball, 0, 0);
+  lv_obj_add_flag(ui.float_ball, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(ui.float_ball, on_float_ball_click,
+                      LV_EVENT_CLICKED, NULL);
+
+  /* gear icon: "?" */
+  ui.float_ball_label = lv_label_create(ui.float_ball);
+  lv_label_set_text(ui.float_ball_label, LV_SYMBOL_SETTINGS);
+  lv_obj_set_style_text_color(ui.float_ball_label, C_TEXT, 0);
+  lv_obj_set_style_text_font(ui.float_ball_label,
+                             &lv_font_montserrat_14, 0);
+  lv_obj_center(ui.float_ball_label);
+}
+
+/* ===================================================================
+ *  public API
  * =================================================================== */
 
 void ai_chat_ui_init(void) {
-    lcd_ui_init();
-    s_msg_head = 0;
-    s_msg_count = 0;
-    s_state = CHAT_IDLE;
-    s_anim_frame = 0;
-    ESP_LOGI(TAG, "AI Chat UI initialized");
-    render_all();
-}
+  ESP_LOGI(TAG, "Creating Voice Assistant UI");
 
-void ai_chat_ui_set_state(chat_state_t state) {
-    s_state = state;
-    s_anim_frame = 0;
-    render_all();
-}
+  lv_obj_t *scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, C_BG, 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-chat_state_t ai_chat_ui_get_state(void) {
-    return s_state;
-}
+  create_top_bar();
+  create_idle_viz();
+  create_listening_viz();
+  create_speaking_viz();
+  create_thinking_viz();
+  create_disconnected_viz();
+  create_bottom_text();
+  create_voice_select_viz();
+  create_float_ball();
 
-void ai_chat_ui_add_message(const char *text, bool is_user) {
-    if (text == NULL) return;
+  hide_all_viz();
+  show_obj(ui.idle.ring_outer);
+  show_obj(ui.idle.ring_mid);
+  show_obj(ui.idle.core);
+  s_state = CHAT_IDLE;
 
-    /* 环形写入 */
-    int idx = (s_msg_head + s_msg_count) % MSG_BUF_SIZE;
-    strncpy(s_msg_buf[idx].text, text, MSG_MAX_LEN - 1);
-    s_msg_buf[idx].text[MSG_MAX_LEN - 1] = '\0';
-    s_msg_buf[idx].is_user = is_user;
-
-    if (s_msg_count < MSG_BUF_SIZE) {
-        s_msg_count++;
-    } else {
-        s_msg_head = (s_msg_head + 1) % MSG_BUF_SIZE;
-    }
-
-    render_all();
+  ESP_LOGI(TAG, "UI ready");
 }
 
 void ai_chat_ui_tick(void) {
-    if (s_state == CHAT_VOICE_SELECT) {
-        s_anim_frame++;
-        draw_voice_selector();
-        lcd_ui_flush();
-        return;
-    }
-    if (s_state == CHAT_IDLE) {
-        s_anim_frame++;
-        draw_status_area();           /* 底部状态 */
-        draw_idle_capsules();         /* 中间胶囊动画 */
-        lcd_ui_flush();
-        return;
-    }
-    if (s_state == CHAT_LISTENING) {
-        s_anim_frame++;
-        draw_status_area();
-        draw_listening_capsules();
-        lcd_ui_flush();
-        return;
-    }
-    if (s_state == CHAT_SPEAKING) {
-        s_anim_frame++;
-        draw_status_area();
-        draw_speaking_waves();
-        lcd_ui_flush();
-        return;
-    }
-    if (s_state != CHAT_THINKING) return;
-    s_anim_frame++;
-    draw_status_area();
-    lcd_ui_flush();
+  lv_timer_handler();
 }
 
-void ai_chat_ui_set_connection(const char *ssid, const char *ip, bool connected) {
-    if (ssid) strncpy(s_ssid, ssid, sizeof(s_ssid) - 1);
-    if (ip)   strncpy(s_ip,   ip,   sizeof(s_ip)   - 1);
-    s_connected = connected;
-    render_all();
+chat_state_t ai_chat_ui_get_state(void) {
+  return s_state;
 }
 
-void ai_chat_ui_set_cloud_connection(bool cloud_connected) {
-    s_cloud_connected = cloud_connected;
-    render_all();
-}
+void ai_chat_ui_set_state(chat_state_t state) {
+  if (state == s_state && state != CHAT_INTERRUPTED) return;
+  s_state = state;
 
-/* ===================================================================
- *  内部实现
- * =================================================================== */
+  hide_all_viz();
 
-static void render_all(void) {
-    lcd_ui_clear(COLOR_BG);
+  lv_color_t state_color = C_TEXT;
+  const char *state_text = "";
+  const char *hint_text = "";
 
-    /* 音色选择面板覆盖整个画面 */
-    if (s_state == CHAT_VOICE_SELECT) {
-        draw_voice_selector();
-        lcd_ui_flush();
-        return;
-    }
+  switch (state) {
+    case CHAT_IDLE:
+      show_obj(ui.idle.ring_outer);
+      show_obj(ui.idle.ring_mid);
+      show_obj(ui.idle.core);
+      state_color = C_GREEN;
+      state_text = "Idle";
+      hint_text = "Tap to start";
+      break;
 
-    draw_status_bar();
+    case CHAT_LISTENING:
+      show_obj(ui.listening.circle);
+      show_obj(ui.listening.icon_mic);
+      show_obj(ui.listening.icon_stand);
+      show_obj(ui.listening.icon_base);
+      for (int i = 0; i < 5; i++) {
+        show_obj(ui.listening.bars_l[i]);
+        show_obj(ui.listening.bars_r[i]);
+      }
+      state_color = C_BLUE;
+      state_text = "Listening";
+      hint_text = "Please wait";
+      break;
 
-    /* 从底部向上渲染消息，最多 MAX_VISIBLE_MSGS 条 */
-    int cur_y = CHAT_AREA_BOTTOM;
-    int shown = 0;
+    case CHAT_SPEAKING:
+      show_obj(ui.speaking.circle);
+      show_obj(ui.speaking.icon_speaker);
+      for (int i = 0; i < 3; i++) show_obj(ui.speaking.wave_arcs[i]);
+      state_color = C_PURPLE;
+      state_text = "AI speaking";
+      hint_text = "Playing";
+      break;
 
-    for (int i = s_msg_count - 1; i >= 0 && shown < MAX_VISIBLE_MSGS; i--) {
-        int idx = (s_msg_head + i) % MSG_BUF_SIZE;
+    case CHAT_THINKING:
+      show_obj(ui.thinking.circle);
+      show_obj(ui.thinking.static_arc);
+      show_obj(ui.thinking.spin_arc);
+      state_color = C_PURPLE;
+      state_text = "Thinking";
+      hint_text = "Generating...";
+      break;
 
-        /* 先计算气泡尺寸 */
-        char lines[8][32];
-        int max_chars = s_msg_buf[idx].is_user ? USER_MAX_CHARS : AI_MAX_CHARS;
-        int line_count = wrap_text(s_msg_buf[idx].text, max_chars, lines, 8);
+    case CHAT_DISCONNECTED:
+      show_obj(ui.disconnected.circle);
+      show_obj(ui.disconnected.bar1);
+      show_obj(ui.disconnected.bar2);
+      state_color = C_RED;
+      state_text = "Disconnected";
+      hint_text = "Check network";
+      break;
 
-        /* 计算气泡宽度（取最宽行） */
-        int bubble_w = 0;
-        for (int ln = 0; ln < line_count; ln++) {
-            int lw = (int)strlen(lines[ln]) * 8 + BUBBLE_PAD_X * 2;
-            if (lw > bubble_w) bubble_w = lw;
-        }
+    case CHAT_INTERRUPTED:
+      show_obj(ui.idle.ring_outer);
+      show_obj(ui.idle.ring_mid);
+      show_obj(ui.idle.core);
+      state_color = C_TEXT_GRAY;
+      state_text = "Interrupted";
+      hint_text = " ";
+      break;
 
-        int bubble_h = line_count * 16 + BUBBLE_PAD_Y * 2;
-        int total_h = bubble_h + 4; /* 含间距 */
-
-        cur_y -= total_h;
-        if (cur_y < CHAT_AREA_TOP) break;
-
-        int bubble_x;
-        if (s_msg_buf[idx].is_user) {
-            bubble_x = LCD_UI_WIDTH - BUBBLE_MARGIN - bubble_w;
-        } else {
-            bubble_x = BUBBLE_MARGIN;
-        }
-
-        int dummy;
-        draw_bubble(bubble_x, cur_y, s_msg_buf[idx].text,
-                    s_msg_buf[idx].is_user, &dummy);
-        shown++;
-    }
-
-    /* 无消息时，根据状态绘制中心动画 */
-    if (s_msg_count == 0) {
-        switch (s_state) {
-        case CHAT_IDLE:
-            draw_idle_capsules();
-            break;
-        case CHAT_LISTENING:
-            draw_listening_capsules();
-            break;
-        case CHAT_SPEAKING:
-            draw_speaking_waves();
-            break;
-        default:
-            break;
-        }
-    }
-
-    draw_status_area();
-
-    /* 右下角小球 — 长按入口提示，所有界面（面板除外） */
-    if (s_state != CHAT_VOICE_SELECT) {
-        lcd_ui_draw_rounded_rect(LCD_UI_WIDTH - 16, STATUS_AREA_Y + 6,
-                                 12, 12, 6, 0xFFC0);
-    }
-
-    lcd_ui_flush();
-}
-
-/* ---- 文本换行 ---- */
-static int wrap_text(const char *text, int max_chars,
-                     char lines[][32], int max_lines) {
-    int line_count = 0;
-    const char *p = text;
-
-    while (*p && line_count < max_lines) {
-        /* 跳过行首空格 */
-        while (*p == ' ') p++;
-        if (*p == '\0') break;
-
-        const char *start = p;
-        int len = 0;
-
-        /* 收集该行字符 */
-        while (*p && len < max_chars) {
-            if (*p == '\n') { p++; break; }
-            p++;
-            len++;
-        }
-
-        /* 回退到词边界（空格处），避免截断单词 */
-        if (*p && *p != ' ' && *p != '\n' && len >= max_chars) {
-            const char *back = p;
-            while (back > start && *back != ' ') back--;
-            if (back > start) {
-                p = back + 1;
-                len = (int)(back - start);
-            }
-        }
-
-        int copy_len = (len < 31) ? len : 31;
-        memcpy(lines[line_count], start, copy_len);
-        lines[line_count][copy_len] = '\0';
-        line_count++;
-    }
-
-    return line_count;
-}
-
-/* ---- 绘制单个气泡 ---- */
-static void draw_bubble(int x, int y, const char *text, bool is_user,
-                         int *height_out) {
-    char lines[8][32];
-    int max_chars = is_user ? USER_MAX_CHARS : AI_MAX_CHARS;
-    int line_count = wrap_text(text, max_chars, lines, 8);
-
-    int bubble_w = 0;
-    for (int i = 0; i < line_count; i++) {
-        int lw = (int)strlen(lines[i]) * 8 + BUBBLE_PAD_X * 2;
-        if (lw > bubble_w) bubble_w = lw;
-    }
-    int bubble_h = line_count * 16 + BUBBLE_PAD_Y * 2;
-
-    uint16_t bg = is_user ? COLOR_USER_BUBBLE : COLOR_CYAN;
-
-    /* 圆角矩形背景 */
-    lcd_ui_draw_rounded_rect(x, y, bubble_w, bubble_h, BUBBLE_R, bg);
-
-    /* 文字（青色气泡用黑字更易读，深灰蓝气泡用白字） */
-    uint16_t fg = is_user ? COLOR_WHITE : COLOR_BG;
-    for (int i = 0; i < line_count; i++) {
-        lcd_ui_draw_string(x + BUBBLE_PAD_X,
-                           y + BUBBLE_PAD_Y + i * 16,
-                           lines[i], fg, bg);
-    }
-
-    if (height_out) *height_out = bubble_h + 4;
-}
-
-/* ---- 顶部状态栏 ---- */
-static void draw_status_bar(void) {
-    /* 细线分隔 */
-    lcd_ui_draw_rect(0, STATUS_BAR_H - 1, LCD_UI_WIDTH, 1, COLOR_GRAY);
-
-    /* 左侧：WiFi 信号 + SSID */
-    if (s_connected && s_ssid[0]) {
-        /* 信号图标：4 条竖线（递增高度的矩形） */
-        int sig_x = 8;
-        int sig_base = 18;
-        for (int i = 0; i < 4; i++) {
-            int bar_h = 4 + i * 3;  /* 4, 7, 10, 13 */
-            int bar_y = sig_base - bar_h;
-            lcd_ui_draw_rect(sig_x + i * 4, bar_y, 3, bar_h, COLOR_GREEN);
-        }
-        lcd_ui_draw_string(sig_x + 20, 4, s_ssid, COLOR_WHITE, COLOR_BG);
-    } else {
-        /* WiFi 未连接 */
-        lcd_ui_draw_string(8, 4, "WiFi: --", COLOR_GRAY, COLOR_BG);
-    }
-
-    /* 右侧：云端连接状态（由 SDK 事件驱动） */
-    int dot_x = LCD_UI_WIDTH - 66;
-    int dot_y = 8;
-    int dot_sz = 6;
-
-    if (s_cloud_connected) {
-        lcd_ui_draw_rect(dot_x, dot_y, dot_sz, dot_sz, COLOR_GREEN);
-        lcd_ui_draw_string(dot_x + 10, 4, "Online", COLOR_GREEN, COLOR_BG);
-    } else {
-        lcd_ui_draw_rect(dot_x, dot_y, dot_sz, dot_sz, COLOR_RED);
-        lcd_ui_draw_string(dot_x + 10, 4, "Offline", COLOR_RED, COLOR_BG);
-    }
-}
-
-/* ---- 底部状态区 ---- */
-static void draw_status_area(void) {
-    /* 分隔线 */
-    lcd_ui_draw_rect(0, STATUS_AREA_Y, LCD_UI_WIDTH, 1, COLOR_GRAY);
-
-    switch (s_state) {
-    case CHAT_IDLE: {
-        /* 绿色圆点 + Ready */
-        int cx = LCD_UI_WIDTH / 2;
-        lcd_ui_draw_rect(cx - 3, STATUS_AREA_Y + 12, 6, 6, COLOR_GREEN);
-        lcd_ui_center_text(STATUS_AREA_Y + 28, "Ready",
-                           COLOR_GREEN, COLOR_BG);
-        break;
-    }
-    case CHAT_LISTENING: {
-        /* 脉冲圆点（红色） + Listening... */
-        int cx = LCD_UI_WIDTH / 2;
-        int dot_sz = (s_anim_frame % 2 == 0) ? 8 : 6;
-        lcd_ui_draw_rect(cx - dot_sz/2, STATUS_AREA_Y + 12 - dot_sz/2 + 3,
-                         dot_sz, dot_sz, COLOR_RED);
-        lcd_ui_center_text(STATUS_AREA_Y + 28, "Listening...",
-                           COLOR_WHITE, COLOR_BG);
-        break;
-    }
-    case CHAT_THINKING: {
-        /* 三个动画点 */
-        int cx = LCD_UI_WIDTH / 2;
-        int dots = s_anim_frame % 4;
-        char dot_str[8];
-        snprintf(dot_str, sizeof(dot_str), "%.*s", dots, "....");
-        for (int i = 0; i < 3; i++) {
-            uint16_t c = (i < dots) ? COLOR_CYAN : COLOR_GRAY;
-            int dx = cx - 14 + i * 14;
-            lcd_ui_draw_rect(dx, STATUS_AREA_Y + 12, 6, 6, c);
-        }
-        lcd_ui_center_text(STATUS_AREA_Y + 28, "Thinking...",
-                           COLOR_GRAY, COLOR_BG);
-        break;
-    }
-    case CHAT_SPEAKING: {
-        /* 青色圆点 + Speaking... */
-        int cx = LCD_UI_WIDTH / 2;
-        lcd_ui_draw_rect(cx - 3, STATUS_AREA_Y + 12, 6, 6, COLOR_CYAN);
-        lcd_ui_center_text(STATUS_AREA_Y + 28, "Speaking...",
-                           COLOR_CYAN, COLOR_BG);
-        break;
-    }
     case CHAT_VOICE_SELECT:
-        break;  /* 面板不经过此分支 */
-    }
+      show_obj(ui.idle.ring_outer);
+      show_obj(ui.idle.ring_mid);
+      show_obj(ui.idle.core);
+      state_color = C_BLUE;
+      state_text = "Voice";
+      hint_text = "Short: next  Long: confirm";
+      break;
+
+    default:
+      break;
+  }
+
+  lv_label_set_text(ui.state_label, state_text);
+  lv_obj_set_style_text_color(ui.state_label, state_color, 0);
+  lv_label_set_text(ui.hint_label, hint_text);
 }
 
-/* ---- 聆听波动胶囊 ---- */
-
-static void draw_listening_capsules(void) {
-    int mid_y = (CHAT_AREA_TOP + CHAT_AREA_BOTTOM) / 2;
-    int capsule_w = 14;
-    int capsule_r = 7;
-    int spacing = 20;
-    int base_h = 12;
-    int amplitude = 28;
-    float speed = 0.18f;
-
-    int total_w = 3 * capsule_w + 2 * spacing;
-    int start_x = (LCD_UI_WIDTH - total_w) / 2;
-
-    for (int i = 0; i < 3; i++) {
-        float phase = (float)i * 2.094f;
-        float val = sinf((float)s_anim_frame * speed + phase);
-        /* 不使用绝对值，让胶囊上下波动交替 */
-        int h = base_h + (int)(amplitude * val);
-        if (h < 4) h = 4;
-        if (h > 40) h = 40;
-
-        int x = start_x + i * (capsule_w + spacing);
-        int y = mid_y - h / 2;
-
-        lcd_ui_draw_rounded_rect(x, y, capsule_w, h, capsule_r, COLOR_RED);
-    }
+void ai_chat_ui_set_network(bool online) {
+  lv_label_set_text(ui.status_label, online ? "Online" : "Offline");
+  lv_obj_set_style_bg_color(ui.status_dot, online ? C_GREEN : C_RED, 0);
 }
 
-/* ---- AI回答波浪 ---- */
-
-static void draw_speaking_waves(void) {
-    int mid_y = (CHAT_AREA_TOP + CHAT_AREA_BOTTOM) / 2;
-    int bar_count = 13;
-    int bar_w = 6;
-    int bar_gap = 3;
-    int max_bar_h = 36;
-    int min_bar_h = 4;
-    int amplitude = (max_bar_h - min_bar_h) / 2;
-    int base_h = min_bar_h + amplitude;  /* 16 + 2 = 居中基准 */
-
-    float speed = 0.15f;
-
-    int total_w = bar_count * (bar_w + bar_gap) - bar_gap;
-    int start_x = (LCD_UI_WIDTH - total_w) / 2;
-
-    for (int i = 0; i < bar_count; i++) {
-        /* 每根柱子不同相位，波浪从左向右滚动 */
-        float phase = (float)i * 0.55f;
-        float val = sinf((float)s_anim_frame * speed + phase);
-        int h = base_h + (int)((float)amplitude * val);
-        if (h < min_bar_h) h = min_bar_h;
-
-        int x = start_x + i * (bar_w + bar_gap);
-        int y = mid_y - h / 2;
-
-        /* 按高度映射颜色：低=深蓝，高=青 */
-        uint16_t color;
-        if (val > 0.3f) {
-            color = COLOR_CYAN;
-        } else if (val > -0.3f) {
-            color = 0x05BB;  /* 中亮蓝 RGB565(0,180,220) */
-        } else {
-            color = 0x1BD9;  /* 深蓝   RGB565(30,120,200) */
-        }
-
-        lcd_ui_draw_rect(x, y, bar_w, h, color);
-    }
+void ai_chat_ui_set_connection(const char *ssid, const char *ip,
+                               bool online) {
+  (void)ssid;
+  (void)ip;
+  ai_chat_ui_set_network(online);
 }
 
-/* ---- 空闲胶囊动画 ---- */
+void ai_chat_ui_update_volume(uint8_t level) {
+  s_volume = level;
+  if (s_state != CHAT_LISTENING) return;
 
-static void draw_idle_capsules(void) {
-    int mid_y = (CHAT_AREA_TOP + CHAT_AREA_BOTTOM) / 2;
-    int capsule_w = 14;
-    int capsule_r = 7;
-    int spacing = 20;
-    int base_h = 12;
-    int amplitude = 28;
-    float speed = 0.12f;
+  /* shape: small/medium/large/medium/small to mimic bar envelope */
+  static const int factor[5] = { 30, 70, 100, 80, 40 };
+  int base = 4 + (level * 22 / 100);  /* 4..26 */
+  if (base > 26) base = 26;
 
-    int total_w = 3 * capsule_w + 2 * spacing;
-    int start_x = (LCD_UI_WIDTH - total_w) / 2;
-
-    for (int i = 0; i < 3; i++) {
-        float phase = (float)i * 2.094f;
-        float val = sinf((float)s_anim_frame * speed + phase);
-        int h = base_h + (int)(amplitude * fabsf(val));
-        if (h < 4) h = 4;
-
-        int x = start_x + i * (capsule_w + spacing);
-        int y = mid_y - h / 2;
-
-        lcd_ui_draw_rounded_rect(x, y, capsule_w, h, capsule_r, COLOR_CYAN);
-    }
+  for (int i = 0; i < 5; i++) {
+    int h = base * factor[i] / 100;
+    if (h < 4) h = 4;
+    if (h > 28) h = 28;
+    lv_anim_set_values(&ui.listening.anims_l[i], 4, h);
+    lv_anim_set_values(&ui.listening.anims_r[i], 4, h);
+  }
 }
 
-/* ===================================================================
- *  音色选择面板
- * =================================================================== */
-
-/* ---- 面板布局 ---- */
-#define VOICE_CARD_X     36
-#define VOICE_CARD_Y     28
-#define VOICE_CARD_W     248
-#define VOICE_CARD_H     170
-#define VOICE_CARD_R     12
-#define VOICE_COL_GAP    12   /* 两列间距 */
-#define VOICE_ITEM_H     18   /* 每项高度 */
-#define VOICE_SLOT_CNT   3    /* 可见槽位数 */
-
-#define VOICE_BG         0x3186  /* 深蓝灰卡片底 */
-#define VOICE_BORDER     0x5AEB
-#define VOICE_SEP        0x39C7
-#define VOICE_TEXT        0xFFFF  /* 白色 */
-#define VOICE_HL_TEXT     0xFFE0  /* 亮黄 */
-#define VOICE_DIM_TEXT    0x632C  /* 暗灰 */
-#define VOICE_LABEL_TEXT  0xAD55  /* 淡绿（标签） */
-
-static void draw_voice_selector(void) {
-    const voice_entry_t *voices = voice_config_get_list();
-    int total = voice_config_count();
-
-    /* 半透明遮罩 + 卡片背景 */
-    lcd_ui_draw_rect(0, 0, LCD_UI_WIDTH, STATUS_BAR_H, COLOR_BG);
-    lcd_ui_draw_rounded_rect(VOICE_CARD_X, VOICE_CARD_Y,
-                             VOICE_CARD_W, VOICE_CARD_H,
-                             VOICE_CARD_R, VOICE_BG);
-
-    /* 标题 */
-    lcd_ui_draw_string(VOICE_CARD_X + 88, VOICE_CARD_Y + 8,
-                       "voice-select", VOICE_LABEL_TEXT, VOICE_BG);
-
-    /* 分隔线 */
-    lcd_ui_draw_rect(VOICE_CARD_X + 12, VOICE_CARD_Y + 26,
-                     VOICE_CARD_W - 24, 1, VOICE_SEP);
-
-    /* 列标签 */
-    lcd_ui_draw_string(VOICE_CARD_X + 28, VOICE_CARD_Y + 34,
-                       "Gender", VOICE_LABEL_TEXT, VOICE_BG);
-    lcd_ui_draw_string(VOICE_CARD_X + 148, VOICE_CARD_Y + 34,
-                       "Timbre", VOICE_LABEL_TEXT, VOICE_BG);
-
-    /* 对话框内绘制两个垂直拨盘 */
-    int gx = VOICE_CARD_X + 16;
-    int vx = VOICE_CARD_X + 132;
-    int base_y = VOICE_CARD_Y + 56;
-
-    for (int slot = 0; slot < VOICE_SLOT_CNT; slot++) {
-        int idx = s_voice_sel_idx - 1 + slot; /* 上一项 / 当前 / 下一项 */
-        int y  = base_y + slot * (VOICE_ITEM_H + 6);
-
-        /* ---- 左列：性别 ---- */
-        bool is_female = (s_voice_sel_idx >= 0 && s_voice_sel_idx < 4);
-        const char *gender_text;
-        uint16_t gender_color;
-
-        if (idx == s_voice_sel_idx) {        /* 当前槽 → 显示当前性别 */
-            gender_text = is_female ? "Female" : "Male";
-            gender_color = VOICE_HL_TEXT;
-        } else {                             /* 上下槽 → 反色显示 */
-            gender_text = is_female ? "Male" : "Female";
-            gender_color = VOICE_DIM_TEXT;
-        }
-
-        lcd_ui_draw_string(gx, y, gender_text, gender_color, VOICE_BG);
-
-        /* ---- 右列：音色 ---- */
-        if (idx >= 0 && idx < total) {
-            uint16_t vc = (idx == s_voice_sel_idx) ? VOICE_HL_TEXT : VOICE_DIM_TEXT;
-            lcd_ui_draw_string(vx, y, voices[idx].name, vc, VOICE_BG);
-        }
-    }
-
-    /* 滚动条（右侧细线） */
-    int bar_x = VOICE_CARD_X + VOICE_CARD_W - 6;
-    int bar_y = VOICE_CARD_Y + 34;
-    int bar_h = VOICE_CARD_H - 44;
-    lcd_ui_draw_rect(bar_x, bar_y, 2, bar_h, VOICE_BORDER);
-
-    int thumb_h = bar_h * 3 / total;
-    int thumb_y = bar_y + (bar_h - thumb_h) * s_voice_sel_idx / (total > 1 ? total - 1 : 1);
-    lcd_ui_draw_rect(bar_x, thumb_y, 2, thumb_h, VOICE_LABEL_TEXT);
-
-    /* 底部提示 */
-    lcd_ui_draw_string(VOICE_CARD_X + 16, VOICE_CARD_Y + VOICE_CARD_H - 18,
-                       "short:next  long:OK", VOICE_DIM_TEXT, VOICE_BG);
-
-    /* 右下角小球 */
-    int ball_x = LCD_UI_WIDTH - 16;
-    int ball_y = LCD_UI_HEIGHT - 18;
-    lcd_ui_draw_rounded_rect(ball_x, ball_y, 12, 12, 6, 0xFFC0);
+void ai_chat_ui_add_message(const char *text, bool is_user) {
+  (void)text;
+  (void)is_user;
 }
-
-/* ---- 公开 API ---- */
 
 void ai_chat_ui_show_voice_selector(bool show) {
-    s_voice_sel_open = show;
-    if (show) {
-        s_voice_sel_idx = voice_config_get();  /* 初始选中 NVS 值 */
-        s_state = CHAT_VOICE_SELECT;
-    } else {
-        s_state = CHAT_IDLE;
+  voice_select_viz_t *vs = &ui.voice_sel;
+
+  if (show) {
+    /* load current voice and resolve gender/timbre */
+    int vid = voice_config_get();
+    voice_gender_t g = voice_config_get_gender(vid);
+    int tcnt = voice_config_get_gender_voice_count(g);
+    vs->gender_idx = (int)g;
+    vs->timbre_idx = 0;
+    for (int i = 0; i < tcnt; i++) {
+      if (voice_config_get_gender_voice_id(g, i) == vid) {
+        vs->timbre_idx = i;
+        break;
+      }
     }
-    render_all();
+
+    voice_sel_refresh_timbres();
+
+    show_obj(vs->panel);
+    show_obj(vs->title_label);
+    show_obj(vs->left_bg);
+    show_obj(vs->right_bg);
+    show_obj(vs->btn_cancel);
+    show_obj(vs->btn_confirm);
+    for (int i = 0; i < VOICE_GENDER_COUNT; i++) {
+      show_obj(vs->gender_labels[i]);
+    }
+    /* timbre_labels visibility handled by voice_sel_refresh_timbres */
+  } else {
+    hide_obj(vs->panel);
+    hide_obj(vs->title_label);
+    hide_obj(vs->left_bg);
+    hide_obj(vs->right_bg);
+    hide_obj(vs->btn_cancel);
+    hide_obj(vs->btn_confirm);
+    for (int i = 0; i < VOICE_GENDER_COUNT; i++) {
+      hide_obj(vs->gender_labels[i]);
+    }
+    for (int i = 0; i < 6; i++) {
+      hide_obj(vs->timbre_labels[i]);
+    }
+  }
 }
 
-int ai_chat_ui_voice_select_next(void) {
-    int n = voice_config_count();
-    s_voice_sel_idx = (s_voice_sel_idx + 1) % n;
-    render_all();
-    return s_voice_sel_idx;
-}
+void ai_chat_ui_voice_select_next(void) {
+  voice_select_viz_t *vs = &ui.voice_sel;
 
-int ai_chat_ui_voice_select_prev(void) {
-    int n = voice_config_count();
-    s_voice_sel_idx = (s_voice_sel_idx - 1 + n) % n;
-    render_all();
-    return s_voice_sel_idx;
+  /* cycle timbre within current gender */
+  vs->timbre_idx = (vs->timbre_idx + 1) % vs->timbre_count;
+  voice_sel_refresh_timbres();
 }
 
 int ai_chat_ui_voice_select_get(void) {
-    return s_voice_sel_idx;
+  voice_select_viz_t *vs = &ui.voice_sel;
+  voice_gender_t g = (voice_gender_t)vs->gender_idx;
+  return voice_config_get_gender_voice_id(g, vs->timbre_idx);
 }
