@@ -93,7 +93,7 @@ void func_handlers_register(void)
 handler 类型定义在 `sdk_integration/convai_func_dispatch.h`：
 
 ```c
-typedef int (*convai_func_handler_t)(
+typedef bool (*convai_func_handler_t)(
     const char *call_id,      // function call 的唯一 ID
     cJSON *args_json,         // arguments 已解析为 cJSON 对象
     char *output_buf,         // 256 字节栈缓冲区，供 snprintf 使用
@@ -110,7 +110,7 @@ typedef int (*convai_func_handler_t)(
 | `buf_size` | 缓冲区大小 |
 | `output_str` | 输出指针，指向回复的 JSON 字符串 |
 
-**返回值**：非零表示已处理（回复仍会发送）；0 表示未识别。注意：返回 0 时若 handler 已设置 `*output_str` 为 error JSON，回复仍会发送——返回值只影响"未注册函数"的日志，不影响回复发送。
+**返回值**：`true` = 已识别并处理（回复中 success/error 都算处理了）；`false` = 参数完全未识别。**返回值与回复是否发送无关**——`*output_str` 总会被发送。`false` 仅让分派框架多打一条 "Unhandled function" 诊断日志。成功/失败由回复 JSON 的 `result` 字段表达，与返回值正交：一个"处理了但失败"的调用（如闹钟时间非法）返回 `true` + `{"result":"error",...}`。
 
 ---
 
@@ -299,15 +299,15 @@ void func_handlers_register(void)
 AI 在对话中下发 `set_face` 切换设备表情页的显示表情。handler 不直接操作 UI，而是调 `talk_page_set_emotion()` 设状态，由 talk_page 模块的动画线程在下帧渲染时应用。
 
 ```c
-static int handle_emotion(const char *call_id, cJSON *args_json,
-                          char *output_buf, size_t buf_size,
-                          const char **output_str)
+static bool handle_emotion(const char *call_id, cJSON *args_json,
+                           char *output_buf, size_t buf_size,
+                           const char **output_str)
 {
     (void)call_id;
     cJSON *emotion_item = cJSON_GetObjectItem(args_json, "face_expression");
     if (!emotion_item || !cJSON_IsString(emotion_item)) {
         *output_str = "{\"result\":\"error\",\"message\":\"missing face_expression\"}";
-        return false;
+        return true;   /* 已识别为 set_face，参数缺失 → error 回复，仍算处理了 */
     }
 
     const char *emotion = emotion_item->valuestring;
@@ -322,7 +322,7 @@ static int handle_emotion(const char *call_id, cJSON *args_json,
         snprintf(output_buf, buf_size,
                  "{\"result\":\"error\",\"message\":\"unsupported emotion: %s\"}", emotion);
         *output_str = output_buf;
-        return false;
+        return true;   /* 同上：已处理，error 回复 */
     }
     talk_page_set_emotion(new_emotion);   /* 动画线程下帧应用 */
     return true;
@@ -331,7 +331,7 @@ static int handle_emotion(const char *call_id, cJSON *args_json,
 
 **设计要点**：
 - handler 只做"参数解析 + 状态设置"，UI 渲染由 talk_page 动画线程异步完成（解耦：functioncall 处理在 bridge 线程，UI 在动画线程）。
-- 不支持的 emotion 值返回 error（`return false` + error JSON），不静默降级 neutral——便于后端感知端侧能力。
+- 返回值恒为 `true`（set_face 总被识别）。参数缺失 / 不支持的 emotion 走 error 回复，让后端感知端侧能力——`result` 字段表达成败，返回值只表达"是否识别此函数"。
 - 支持的 5 种表情：`neutral` / `happy` / `angry` / `sad` / `doubt`。
 
 ---

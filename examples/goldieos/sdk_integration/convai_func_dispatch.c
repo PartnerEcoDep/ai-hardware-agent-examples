@@ -88,7 +88,7 @@ static void func_dispatch_message_cb(const char *json_str)
         cJSON *args_json = arguments ? cJSON_Parse(arguments) : NULL;
 
         if (name && args_json) {
-            int handled = 0;
+            bool handled = false;
             for (int h = 0; h < s_count; h++) {
                 if (strcmp(name, s_registry[h].name) == 0) {
                     handled = s_registry[h].handler(

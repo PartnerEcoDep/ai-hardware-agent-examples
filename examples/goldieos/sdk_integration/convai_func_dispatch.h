@@ -16,15 +16,19 @@
  *   func_dispatch_unregister();                    // at shutdown
  *
  * Handler contract:
- *   - Returns true if the call was handled (reply sent), false if unrecognized
- *     args (still sends a reply with the error).
- *   - On success, may set *output_str to a custom JSON reply (default success
- *     JSON is used if left unchanged).
+ *   - Returns true if the call was recognized and handled (a success or error
+ *     reply is placed in *output_str).
+ *   - Returns false only if the args were not recognized at all. The dispatcher
+ *     sends *output_str either way; false just adds an "unhandled" diagnostic
+ *     log. Success vs. failure is conveyed by the JSON "result" field in the
+ *     reply, NOT by this return value — so a handled-but-failed call still
+ *     returns true.
  */
 #ifndef CONVAI_FUNC_DISPATCH_H
 #define CONVAI_FUNC_DISPATCH_H
 
 #include <stddef.h>
+#include <stdbool.h>
 
 /* Forward decl — avoids pulling cJSON.h into this header. */
 struct cJSON;
@@ -42,9 +46,10 @@ extern "C" {
  * @param buf_size    size of output_buf
  * @param output_str  IN/OUT: defaults to a success JSON string; handler may
  *                    repoint it to output_buf (or a literal) to customize
- * @return true = handled (reply sent), false = args error (error reply sent)
+ * @return true if the call was recognized and handled (success or error reply
+ *         placed in *output_str); false only if the args were not recognized.
  */
-typedef int (*convai_func_handler_t)(const char *call_id,
+typedef bool (*convai_func_handler_t)(const char *call_id,
                                      struct cJSON *args_json,
                                      char *output_buf, size_t buf_size,
                                      const char **output_str);
