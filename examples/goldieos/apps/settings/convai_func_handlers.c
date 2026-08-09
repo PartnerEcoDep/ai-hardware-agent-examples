@@ -23,18 +23,19 @@
  * ================================================================ */
 
 /* handle_emotion: set the talk-page avatar emotion from a face_expression
- * string. Returns false (with error reply) for unsupported emotions so the
- * backend knows the device doesn't support them. */
-static int handle_emotion(const char *call_id, cJSON *args_json,
-                          char *output_buf, size_t buf_size,
-                          const char **output_str)
+ * string. Always returns true (handled) — set_face is always recognized and a
+ * reply is sent either way. Unsupported/missing face_expression yields an
+ * error reply so the backend knows the device can't act on it. */
+static bool handle_emotion(const char *call_id, cJSON *args_json,
+                           char *output_buf, size_t buf_size,
+                           const char **output_str)
 {
     (void)call_id;
 
     cJSON *emotion_item = cJSON_GetObjectItem(args_json, "face_expression");
     if (!emotion_item || !cJSON_IsString(emotion_item)) {
         *output_str = "{\"result\":\"error\",\"message\":\"missing face_expression\"}";
-        return false;
+        return true;
     }
 
     const char *emotion = emotion_item->valuestring;
@@ -50,7 +51,7 @@ static int handle_emotion(const char *call_id, cJSON *args_json,
         snprintf(output_buf, buf_size,
                  "{\"result\":\"error\",\"message\":\"unsupported emotion: %s\"}", emotion);
         *output_str = output_buf;
-        return false;
+        return true;
     }
     talk_page_set_emotion(new_emotion);
     return true;
@@ -59,7 +60,7 @@ static int handle_emotion(const char *call_id, cJSON *args_json,
 /* handle_set_alarm: parse time/label/repeat and add an alarm via AlarmService.
  * Accepts two time formats: "time":"HH:MM" (standard) or "hour"/"minute"
  * numbers (legacy). */
-static int handle_set_alarm(const char *call_id, cJSON *args_json,
+static bool handle_set_alarm(const char *call_id, cJSON *args_json,
                             char *output_buf, size_t buf_size,
                             const char **output_str)
 {
@@ -173,7 +174,7 @@ static int handle_set_alarm(const char *call_id, cJSON *args_json,
 /* handle_get_weather: device has no HTTP capability; just echo the location
  * and return a placeholder. Real weather data is delivered by the AI in the
  * conversation. */
-static int handle_get_weather(const char *call_id, cJSON *args_json,
+static bool handle_get_weather(const char *call_id, cJSON *args_json,
                               char *output_buf, size_t buf_size,
                               const char **output_str)
 {
