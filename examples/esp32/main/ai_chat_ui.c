@@ -541,6 +541,13 @@ static void create_bottom_text(void) {
  * =================================================================== */
 
 static void hide_all_viz(void) {
+  /* IMPORTANT: stop every running animation before hiding objects.
+   * Without this, the breathing/pulse/wave animations continue to
+   * mutate hidden widgets every few ms, flooding LVGL's invalid-area
+   * queue and driving lv_timer_handler from 5ms to 50-90ms per frame,
+   * which manifests as "界面卡死" within minutes. */
+  lv_anim_delete_all();
+
   hide_obj(ui.idle.ring_outer);
   hide_obj(ui.idle.ring_mid);
   hide_obj(ui.idle.core);
@@ -567,6 +574,107 @@ static void hide_all_viz(void) {
    * individually hide them, because set_state() only re-shows the
    * panel -- individually-hidden children would stay invisible. */
   hide_obj(ui.voice_sel.panel);
+}
+
+/* ===================================================================
+ *  animation restarters (called from set_state() AFTER lv_anim_delete_all
+ *  has been issued in hide_all_viz, so re-showing a viz re-launches
+ *  its breathing/pulse/wave animations cleanly).
+ * =================================================================== */
+static void start_idle_anims(void) {
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.idle.ring_outer);
+  lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+  lv_anim_set_values(&a, 110, 128);
+  lv_anim_set_duration(&a, 2000);
+  lv_anim_set_playback_duration(&a, 2000);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.idle.ring_outer);
+  lv_anim_set_exec_cb(&a, anim_pulse_opa_cb);
+  lv_anim_set_values(&a, LV_OPA_70, LV_OPA_10);
+  lv_anim_set_duration(&a, 2000);
+  lv_anim_set_playback_duration(&a, 2000);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.idle.core);
+  lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+  lv_anim_set_values(&a, 22, 26);
+  lv_anim_set_duration(&a, 1500);
+  lv_anim_set_playback_duration(&a, 1500);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+}
+
+static void start_listening_anims(void) {
+  static const int default_h[5] = { 8, 16, 26, 18, 10 };
+  for (int i = 0; i < 5; i++) {
+    anim_init_bar(&ui.listening.anims_l[i], ui.listening.bars_l[i],
+                  4, default_h[i], 500 + i * 80);
+    lv_anim_start(&ui.listening.anims_l[i]);
+    anim_init_bar(&ui.listening.anims_r[i], ui.listening.bars_r[i],
+                  4, default_h[i], 500 + i * 80);
+    lv_anim_start(&ui.listening.anims_r[i]);
+  }
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.listening.circle);
+  lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+  lv_anim_set_values(&a, 80, 88);
+  lv_anim_set_duration(&a, 1500);
+  lv_anim_set_playback_duration(&a, 1500);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+  lv_anim_start(&a);
+}
+
+static void start_speaking_anims(void) {
+  static const int wave_sizes[3] = { 96, 110, 124 };
+  for (int i = 0; i < 3; i++) {
+    int s = wave_sizes[i];
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ui.speaking.wave_arcs[i]);
+    lv_anim_set_exec_cb(&a, anim_pulse_centered_cb);
+    lv_anim_set_values(&a, s, s + 16);
+    lv_anim_set_duration(&a, 1200);
+    lv_anim_set_playback_duration(&a, 1200);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_delay(&a, i * 400);
+    lv_anim_start(&a);
+
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ui.speaking.wave_arcs[i]);
+    lv_anim_set_exec_cb(&a, anim_pulse_opa_cb);
+    lv_anim_set_values(&a, LV_OPA_70, LV_OPA_10);
+    lv_anim_set_duration(&a, 1200);
+    lv_anim_set_playback_duration(&a, 1200);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_set_delay(&a, i * 400);
+    lv_anim_start(&a);
+  }
+}
+
+static void start_thinking_anims(void) {
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, ui.thinking.spin_arc);
+  lv_anim_set_exec_cb(&a, anim_arc_rotate_cb);
+  lv_anim_set_values(&a, 0, 3600);
+  lv_anim_set_duration(&a, 1500);
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_set_path_cb(&a, lv_anim_path_linear);
+  lv_anim_start(&a);
 }
 
 /* ===================================================================
@@ -934,6 +1042,7 @@ void ai_chat_ui_init(void) {
   show_obj(ui.idle.ring_outer);
   show_obj(ui.idle.ring_mid);
   show_obj(ui.idle.core);
+  start_idle_anims();
   s_state = CHAT_IDLE;
 
   lvgl_port_unlock();
@@ -981,6 +1090,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
       show_obj(ui.idle.ring_outer);
       show_obj(ui.idle.ring_mid);
       show_obj(ui.idle.core);
+      start_idle_anims();
       state_color = C_GREEN;
       state_text = "Idle";
       hint_text = "Tap to start";
@@ -995,6 +1105,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
         show_obj(ui.listening.bars_l[i]);
         show_obj(ui.listening.bars_r[i]);
       }
+      start_listening_anims();
       state_color = C_BLUE;
       state_text = "Listening";
       hint_text = "Please wait";
@@ -1004,6 +1115,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
       show_obj(ui.speaking.circle);
       show_obj(ui.speaking.icon_speaker);
       for (int i = 0; i < 3; i++) show_obj(ui.speaking.wave_arcs[i]);
+      start_speaking_anims();
       state_color = C_PURPLE;
       state_text = "AI speaking";
       hint_text = "Playing";
@@ -1013,6 +1125,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
       show_obj(ui.thinking.circle);
       show_obj(ui.thinking.static_arc);
       show_obj(ui.thinking.spin_arc);
+      start_thinking_anims();
       state_color = C_PURPLE;
       state_text = "Thinking";
       hint_text = "Generating...";
@@ -1031,6 +1144,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
       show_obj(ui.idle.ring_outer);
       show_obj(ui.idle.ring_mid);
       show_obj(ui.idle.core);
+      start_idle_anims();
       state_color = C_TEXT_GRAY;
       state_text = "Interrupted";
       hint_text = " ";
