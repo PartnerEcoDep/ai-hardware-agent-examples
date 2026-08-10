@@ -512,6 +512,7 @@ static void audio_capture_task(void *arg)
         return;
     }
 
+    int hb_cnt = 0;
     while (1)
     {
         size_t received;
@@ -522,7 +523,14 @@ static void audio_capture_task(void *arg)
             ai_chat_ui_update_volume(compute_audio_level(buf, received));
             convai_send_audio(g_engine, buf, received, &info);
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); /* ?10ms ? ? ?*/
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        /* Heartbeat every ~30s (3000 x 10ms) */
+        if (++hb_cnt >= 3000) {
+            hb_cnt = 0;
+            ESP_LOGI(TAG, "audio heartbeat: free_heap=%u",
+                     (unsigned)esp_get_free_heap_size());
+        }
     }
     free(buf);
     vTaskDelete(NULL);
@@ -657,7 +665,7 @@ void app_main(void)
         convai_opt_t opt = {.mode = CONVAI_MODE_WS};
         convai_start(g_engine, &opt);
         printf("[8/8] SDK started (v%s)\n", convai_get_version());
-        xTaskCreate(audio_capture_task, "audio_cap", 4096, NULL, 5, NULL);
+        xTaskCreate(audio_capture_task, "audio_cap", 8192, NULL, 5, NULL);
     }
     fflush(stdout);
 
@@ -718,6 +726,18 @@ skip_hw:
 
         s_btn_was_down = down;
         ai_chat_ui_tick();
+
+        /* Heartbeat + heap monitor: every ~10s (200 loops x 50ms) */
+        {
+            static int s_hb_cnt = 0;
+            if (++s_hb_cnt >= 200) {
+                s_hb_cnt = 0;
+                ESP_LOGI(TAG, "heartbeat: free_heap=%u, min_free=%u",
+                         (unsigned)esp_get_free_heap_size(),
+                         (unsigned)esp_get_minimum_free_heap_size());
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 

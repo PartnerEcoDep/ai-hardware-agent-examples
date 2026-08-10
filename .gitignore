@@ -13,3 +13,4 @@ managed_components/
 
 # 文档（不入库）
 docs/
+examples/esp32/tools/node_modules/

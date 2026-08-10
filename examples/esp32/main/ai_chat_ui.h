@@ -51,6 +51,8 @@ void ai_chat_ui_update_volume(uint8_t level);
 void ai_chat_ui_touch_indicator(int x, int y);
 void ai_chat_ui_touch_indicator_hide(void);
 
+void ai_chat_ui_touch_swipe(int x, int y, bool pressed);
+
 /* legacy no-op stubs */
 void ai_chat_ui_add_message(const char *text, bool is_user);
 void ai_chat_ui_show_voice_selector(bool show);

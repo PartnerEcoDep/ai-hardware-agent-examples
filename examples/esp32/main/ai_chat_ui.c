@@ -78,16 +78,21 @@ typedef struct {
 } disconnected_viz_t;
 
 typedef struct {
-  lv_obj_t *panel;
-  lv_obj_t *title_label;
-  lv_obj_t *left_bg;
-  lv_obj_t *right_bg;
-  lv_obj_t *gender_labels[VOICE_GENDER_COUNT];
-  lv_obj_t *timbre_labels[6];  /* max 6 per gender */
-  lv_obj_t *btn_cancel;
-  lv_obj_t *btn_confirm;
-  lv_obj_t *cancel_label;
-  lv_obj_t *confirm_label;
+  lv_obj_t *panel;             /* full-screen card */
+  lv_obj_t *btn_back;          /* top-left back button */
+  lv_obj_t *title_label;       /* "音色选择" */
+  lv_obj_t *btn_save;          /* top-right save button */
+  lv_obj_t *btn_male;          /* gender toggle: 男声 */
+  lv_obj_t *btn_female;        /* gender toggle: 女声 */
+  lv_obj_t *icon_label;        /* circle container */
+  lv_obj_t *icon_text;         /* text inside icon (F/M/R) */
+  lv_obj_t *name_label;        /* voice name, e.g. "温润男声" */
+  lv_obj_t *name_prev;         /* previous voice name (dimmed, left) */
+  lv_obj_t *name_next;         /* next voice name (dimmed, right) */
+  lv_obj_t *desc_label;        /* description line 1 */
+  lv_obj_t *tags_label;        /* tags, e.g. "清晰 年轻 活力" */
+  lv_obj_t *dots[6];           /* page indicator dots */
+  lv_obj_t *code_label;        /* code, e.g. "M02" */
   int       timbre_count;
   int       gender_idx;
   int       timbre_idx;
@@ -187,9 +192,9 @@ static void create_top_bar(void) {
   /* WiFi — plain text, CJK font has no FontAwesome symbols */
   lv_obj_t *wifi_icon = lv_label_create(lv_screen_active());
   lv_label_set_text(wifi_icon, "WiFi");
-  lv_obj_set_pos(wifi_icon, 290, 10);
   lv_obj_set_style_text_color(wifi_icon, C_TEXT, 0);
   lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_14, 0);
+  lv_obj_align(wifi_icon, LV_ALIGN_TOP_RIGHT, -8, 10);
 }
 
 /* ===================================================================
@@ -556,189 +561,275 @@ static void hide_all_viz(void) {
   hide_obj(ui.disconnected.circle);
   hide_obj(ui.disconnected.bar1);
   hide_obj(ui.disconnected.bar2);
+  /* Voice-select panel: only hide the panel itself.
+   * All children (buttons, labels, dots) are created as panel children,
+   * so they are invisible while the panel is hidden.  We must NOT
+   * individually hide them, because set_state() only re-shows the
+   * panel -- individually-hidden children would stay invisible. */
   hide_obj(ui.voice_sel.panel);
-  hide_obj(ui.voice_sel.title_label);
-  hide_obj(ui.voice_sel.left_bg);
-  hide_obj(ui.voice_sel.right_bg);
-  for (int i = 0; i < VOICE_GENDER_COUNT; i++) {
-    hide_obj(ui.voice_sel.gender_labels[i]);
-  }
-  for (int i = 0; i < 6; i++) {
-    hide_obj(ui.voice_sel.timbre_labels[i]);
-  }
 }
 
 /* ===================================================================
- *  voice selector panel (dual-column)
+ *  voice selector - card style with page dots
  * =================================================================== */
 
-/* refresh right-column timbre labels for current gender */
+/* Refresh the voice card display for current gender + timbre_idx */
 static void voice_sel_refresh_timbres(void) {
   voice_select_viz_t *vs = &ui.voice_sel;
   voice_gender_t gender = (voice_gender_t)vs->gender_idx;
   vs->timbre_count = voice_config_get_gender_voice_count(gender);
+  if (vs->timbre_count < 1) vs->timbre_count = 1;
+  if (vs->timbre_idx >= vs->timbre_count) vs->timbre_idx = 0;
 
+  int vid = voice_config_get_gender_voice_id(gender, vs->timbre_idx);
+  const voice_entry_t *ve = &voice_config_get_list()[vid];
+
+  /* Update icon text */
+  const char *icons[] = { "F", "M", "R" };
+  lv_label_set_text(vs->icon_text, icons[vs->gender_idx]);
+  lv_obj_set_style_bg_color(vs->icon_label,
+      (vs->gender_idx == 0) ? C_PURPLE :
+      (vs->gender_idx == 1) ? C_BLUE : C_GREEN, 0);
+
+  /* Name + desc + tags + code */
+  lv_label_set_text(vs->name_label, ve->name);
+  lv_label_set_text(vs->desc_label, ve->desc);
+  lv_label_set_text(vs->tags_label, ve->tags);
+  lv_label_set_text(vs->code_label, ve->code);
+
+  /* Side labels: show prev/next voice names (dimmed) */
+  int prev_idx = (vs->timbre_idx - 1 + vs->timbre_count) % vs->timbre_count;
+  int next_idx = (vs->timbre_idx + 1) % vs->timbre_count;
+  int prev_vid = voice_config_get_gender_voice_id(gender, prev_idx);
+  int next_vid = voice_config_get_gender_voice_id(gender, next_idx);
+  lv_label_set_text(vs->name_prev, voice_config_get_list()[prev_vid].name);
+  lv_label_set_text(vs->name_next, voice_config_get_list()[next_vid].name);
+
+  /* Gender toggle highlight */
+  lv_obj_set_style_bg_opa(vs->btn_male,
+      (vs->gender_idx == 1) ? LV_OPA_COVER : LV_OPA_20, 0);
+  lv_obj_set_style_bg_opa(vs->btn_female,
+      (vs->gender_idx == 0) ? LV_OPA_COVER : LV_OPA_20, 0);
+
+  /* Page dots */
   for (int i = 0; i < 6; i++) {
     if (i < vs->timbre_count) {
-      const char *name = voice_config_get_gender_voice_name(gender, i);
-      lv_label_set_text(vs->timbre_labels[i], name);
-      lv_obj_set_style_text_color(vs->timbre_labels[i],
-          (i == vs->timbre_idx) ? C_BLUE : C_TEXT_GRAY, 0);
-      show_obj(vs->timbre_labels[i]);
+      show_obj(vs->dots[i]);
+      lv_obj_set_style_bg_color(vs->dots[i],
+          (i == vs->timbre_idx) ? C_BLUE :
+          lv_color_hex(0x4B5563), 0);
     } else {
-      hide_obj(vs->timbre_labels[i]);
+      hide_obj(vs->dots[i]);
     }
   }
-
-  /* update gender highlight */
-  for (int g = 0; g < VOICE_GENDER_COUNT; g++) {
-    lv_obj_set_style_text_color(vs->gender_labels[g],
-        (g == vs->gender_idx) ? C_BLUE : C_TEXT_GRAY, 0);
-  }
-
-  /* clamp timbre_idx */
-  if (vs->timbre_idx >= vs->timbre_count) vs->timbre_idx = 0;
 }
 
-static void on_gender_click(lv_event_t *e) {
-  lv_obj_t *target = lv_event_get_target_obj(e);
+/* Gender toggle callback */
+static void on_gender_btn_click(lv_event_t *e) {
   int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  if (ui.voice_sel.gender_idx == idx) return;
   ui.voice_sel.gender_idx = idx;
   ui.voice_sel.timbre_idx = 0;
+  ESP_LOGI(TAG, "voice gender -> %d (%s)", idx,
+           voice_config_get_gender_name((voice_gender_t)idx));
   voice_sel_refresh_timbres();
-  (void)target;
 }
 
-static void on_timbre_click(lv_event_t *e) {
-  lv_obj_t *target = lv_event_get_target_obj(e);
-  int idx = (int)(intptr_t)lv_event_get_user_data(e);
-  ui.voice_sel.timbre_idx = idx;
-  voice_sel_refresh_timbres();
-  (void)target;
-}
-
-static void on_voice_sel_cancel(lv_event_t *e) {
-  (void)e;
-  ai_chat_ui_show_voice_selector(false);
-  ai_chat_ui_set_state(CHAT_IDLE);
-}
-
+/* Save = confirm */
 static void on_voice_sel_confirm(lv_event_t *e) {
   (void)e;
   voice_select_viz_t *vs = &ui.voice_sel;
   voice_gender_t g = (voice_gender_t)vs->gender_idx;
   int sel = voice_config_get_gender_voice_id(g, vs->timbre_idx);
+  const char *name = voice_config_get_gender_voice_name(g, vs->timbre_idx);
+  ESP_LOGI(TAG, "voice confirm: id=%d name=%s", sel, name);
   voice_config_set(NULL, sel);
+  ESP_LOGI(TAG, "voice set done: id=%d (%s)", sel, name);
+  ai_chat_ui_show_voice_selector(false);
+  ai_chat_ui_set_state(CHAT_IDLE);
+}
+
+/* Back = cancel */
+static void on_voice_sel_back(lv_event_t *e) {
+  (void)e;
+  ESP_LOGI(TAG, "voice select cancelled");
   ai_chat_ui_show_voice_selector(false);
   ai_chat_ui_set_state(CHAT_IDLE);
 }
 
 static void create_voice_select_viz(void) {
   voice_select_viz_t *vs = &ui.voice_sel;
-  const int pw = 230, ph = 140;
-  const int px = ORB_CX - pw / 2, py = ORB_CY - ph / 2;
+  lv_obj_t *scr = lv_screen_active();
 
-  /* dark card */
-  vs->panel = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(vs->panel, pw, ph);
-  lv_obj_set_pos(vs->panel, px, py);
-  lv_obj_set_style_bg_color(vs->panel, lv_color_hex(0x18181B), 0);
-  lv_obj_set_style_bg_opa(vs->panel, LV_OPA_90, 0);
-  lv_obj_set_style_border_width(vs->panel, 1, 0);
-  lv_obj_set_style_border_color(vs->panel, lv_color_hex(0x3730A3), 0);
-  lv_obj_set_style_radius(vs->panel, 12, 0);
+  /* ---- Full-screen panel ---- */
+  vs->panel = lv_obj_create(scr);
+  lv_obj_set_size(vs->panel, 320, 240);
+  lv_obj_set_pos(vs->panel, 0, 0);
+  lv_obj_set_style_bg_color(vs->panel, lv_color_hex(0x0F0F14), 0);
+  lv_obj_set_style_bg_opa(vs->panel, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(vs->panel, 0, 0);
+  lv_obj_set_style_radius(vs->panel, 0, 0);
   lv_obj_set_style_pad_all(vs->panel, 0, 0);
+  lv_obj_clear_flag(vs->panel, LV_OBJ_FLAG_SCROLLABLE);
 
-  /* title */
+  /* ---- Top bar: back | title | save ---- */
+  vs->btn_back = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->btn_back, 50, 28);
+  lv_obj_set_pos(vs->btn_back, 6, 6);
+  lv_obj_set_style_bg_color(vs->btn_back, lv_color_hex(0x374151), 0);
+  lv_obj_set_style_bg_opa(vs->btn_back, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(vs->btn_back, 6, 0);
+  lv_obj_set_style_border_width(vs->btn_back, 0, 0);
+  lv_obj_set_style_pad_all(vs->btn_back, 0, 0);
+  lv_obj_add_flag(vs->btn_back, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(vs->btn_back, on_voice_sel_back,
+                      LV_EVENT_CLICKED, NULL);
+  {
+    lv_obj_t *l = lv_label_create(vs->btn_back);
+    lv_label_set_text(l, "<");
+    lv_obj_set_style_text_color(l, C_TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+    lv_obj_center(l);
+  }
+
   vs->title_label = lv_label_create(vs->panel);
-  lv_label_set_text(vs->title_label, "Voice Select");
-  lv_obj_set_style_text_color(vs->title_label, C_TEXT_GRAY, 0);
-  lv_obj_set_style_text_font(vs->title_label, &lv_font_montserrat_14, 0);
-  lv_obj_align(vs->title_label, LV_ALIGN_TOP_MID, 0, 6);
+  lv_label_set_text(vs->title_label, "Voice");
+  lv_obj_set_style_text_color(vs->title_label, C_TEXT, 0);
+  lv_obj_set_style_text_font(vs->title_label, &lv_font_montserrat_16, 0);
+  lv_obj_align(vs->title_label, LV_ALIGN_TOP_MID, 0, 12);
 
-  /* left column bg */
-  vs->left_bg = lv_obj_create(vs->panel);
-  lv_obj_set_size(vs->left_bg, 80, 76);
-  lv_obj_set_pos(vs->left_bg, 6, 28);
-  lv_obj_set_style_bg_color(vs->left_bg, lv_color_hex(0x0F0F14), 0);
-  lv_obj_set_style_bg_opa(vs->left_bg, LV_OPA_70, 0);
-  lv_obj_set_style_border_width(vs->left_bg, 0, 0);
-  lv_obj_set_style_radius(vs->left_bg, 6, 0);
-  lv_obj_set_style_pad_all(vs->left_bg, 0, 0);
-
-  /* right column bg */
-  vs->right_bg = lv_obj_create(vs->panel);
-  lv_obj_set_size(vs->right_bg, 132, 76);
-  lv_obj_set_pos(vs->right_bg, 92, 28);
-  lv_obj_set_style_bg_color(vs->right_bg, lv_color_hex(0x0F0F14), 0);
-  lv_obj_set_style_bg_opa(vs->right_bg, LV_OPA_70, 0);
-  lv_obj_set_style_border_width(vs->right_bg, 0, 0);
-  lv_obj_set_style_radius(vs->right_bg, 6, 0);
-  lv_obj_set_style_pad_all(vs->right_bg, 0, 0);
-
-  /* gender labels (left column) */
-  const int gl_y[VOICE_GENDER_COUNT] = {4, 28, 52};
-  for (int g = 0; g < VOICE_GENDER_COUNT; g++) {
-    vs->gender_labels[g] = lv_label_create(vs->left_bg);
-    lv_label_set_text(vs->gender_labels[g],
-                      voice_config_get_gender_name((voice_gender_t)g));
-    lv_obj_set_style_text_font(vs->gender_labels[g],
-                               &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(vs->gender_labels[g], 10, gl_y[g]);
-    lv_obj_add_flag(vs->gender_labels[g], LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(vs->gender_labels[g], on_gender_click,
-                        LV_EVENT_CLICKED, (void *)(intptr_t)g);
+  vs->btn_save = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->btn_save, 50, 28);
+  lv_obj_set_pos(vs->btn_save, 264, 6);
+  lv_obj_set_style_bg_color(vs->btn_save, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(vs->btn_save, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(vs->btn_save, 6, 0);
+  lv_obj_set_style_border_width(vs->btn_save, 0, 0);
+  lv_obj_set_style_pad_all(vs->btn_save, 0, 0);
+  lv_obj_add_flag(vs->btn_save, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(vs->btn_save, on_voice_sel_confirm,
+                      LV_EVENT_CLICKED, NULL);
+  {
+    lv_obj_t *l = lv_label_create(vs->btn_save);
+    lv_label_set_text(l, "OK");
+    lv_obj_set_style_text_color(l, C_TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+    lv_obj_center(l);
   }
 
-  /* timbre labels (right column, max 6) */
+  /* ---- Gender toggle: Male | Female ---- */
+  vs->btn_male = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->btn_male, 70, 28);
+  lv_obj_set_pos(vs->btn_male, 80, 44);
+  lv_obj_set_style_bg_color(vs->btn_male, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(vs->btn_male, LV_OPA_20, 0);
+  lv_obj_set_style_radius(vs->btn_male, 6, 0);
+  lv_obj_set_style_border_width(vs->btn_male, 0, 0);
+  lv_obj_set_style_pad_all(vs->btn_male, 0, 0);
+  lv_obj_add_flag(vs->btn_male, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(vs->btn_male, on_gender_btn_click,
+                      LV_EVENT_CLICKED, (void *)(intptr_t)1);
+  {
+    lv_obj_t *l = lv_label_create(vs->btn_male);
+    lv_label_set_text(l, "Male");
+    lv_obj_set_style_text_color(l, C_TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+    lv_obj_center(l);
+  }
+
+  vs->btn_female = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->btn_female, 70, 28);
+  lv_obj_set_pos(vs->btn_female, 170, 44);
+  lv_obj_set_style_bg_color(vs->btn_female, C_PURPLE, 0);
+  lv_obj_set_style_bg_opa(vs->btn_female, LV_OPA_20, 0);
+  lv_obj_set_style_radius(vs->btn_female, 6, 0);
+  lv_obj_set_style_border_width(vs->btn_female, 0, 0);
+  lv_obj_set_style_pad_all(vs->btn_female, 0, 0);
+  lv_obj_add_flag(vs->btn_female, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(vs->btn_female, on_gender_btn_click,
+                      LV_EVENT_CLICKED, (void *)(intptr_t)0);
+  {
+    lv_obj_t *l = lv_label_create(vs->btn_female);
+    lv_label_set_text(l, "Female");
+    lv_obj_set_style_text_color(l, C_TEXT, 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+    lv_obj_center(l);
+  }
+
+  /* ---- Center icon (circle with letter) ---- */
+  vs->icon_label = lv_obj_create(vs->panel);
+  lv_obj_set_size(vs->icon_label, 56, 56);
+  lv_obj_align(vs->icon_label, LV_ALIGN_TOP_MID, 0, 82);
+  lv_obj_set_style_bg_color(vs->icon_label, C_BLUE, 0);
+  lv_obj_set_style_bg_opa(vs->icon_label, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(vs->icon_label, 28, 0);
+  lv_obj_set_style_border_width(vs->icon_label, 0, 0);
+  lv_obj_set_style_pad_all(vs->icon_label, 0, 0);
+  lv_obj_clear_flag(vs->icon_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  vs->icon_text = lv_label_create(vs->icon_label);
+  lv_label_set_text(vs->icon_text, "M");
+  lv_obj_set_style_text_color(vs->icon_text, C_TEXT, 0);
+  lv_obj_set_style_text_font(vs->icon_text, &lv_font_montserrat_16, 0);
+  lv_obj_center(vs->icon_text);
+
+  /* ---- Voice name ---- */
+  vs->name_label = lv_label_create(vs->panel);
+  lv_label_set_text(vs->name_label, "");
+  lv_obj_set_style_text_color(vs->name_label, C_TEXT, 0);
+  lv_obj_set_style_text_font(vs->name_label, &lv_font_custom_cjk_16, 0);
+  lv_obj_align(vs->name_label, LV_ALIGN_TOP_MID, 0, 146);
+
+  /* ---- Side voice names (prev/next, dimmed) ---- */
+  vs->name_prev = lv_label_create(vs->panel);
+  lv_label_set_text(vs->name_prev, "");
+  lv_obj_set_style_text_color(vs->name_prev, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_opa(vs->name_prev, LV_OPA_40, 0);
+  lv_obj_set_style_text_font(vs->name_prev, &lv_font_custom_cjk_14, 0);
+  lv_obj_set_style_text_align(vs->name_prev, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_pos(vs->name_prev, 8, 150);
+
+  vs->name_next = lv_label_create(vs->panel);
+  lv_label_set_text(vs->name_next, "");
+  lv_obj_set_style_text_color(vs->name_next, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_opa(vs->name_next, LV_OPA_40, 0);
+  lv_obj_set_style_text_font(vs->name_next, &lv_font_custom_cjk_14, 0);
+  lv_obj_set_style_text_align(vs->name_next, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_pos(vs->name_next, 220, 150);
+
+  /* ---- Description ---- */
+  vs->desc_label = lv_label_create(vs->panel);
+  lv_label_set_text(vs->desc_label, "");
+  lv_obj_set_style_text_color(vs->desc_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(vs->desc_label, &lv_font_custom_cjk_14, 0);
+  lv_obj_align(vs->desc_label, LV_ALIGN_TOP_MID, 0, 168);
+
+  /* ---- Tags ---- */
+  vs->tags_label = lv_label_create(vs->panel);
+  lv_label_set_text(vs->tags_label, "");
+  lv_obj_set_style_text_color(vs->tags_label, C_BLUE, 0);
+  lv_obj_set_style_text_font(vs->tags_label, &lv_font_custom_cjk_14, 0);
+  lv_obj_align(vs->tags_label, LV_ALIGN_TOP_MID, 0, 188);
+
+  /* ---- Bottom: page dots (centered) ---- */
   for (int i = 0; i < 6; i++) {
-    vs->timbre_labels[i] = lv_label_create(vs->right_bg);
-    lv_label_set_text(vs->timbre_labels[i], "");
-    lv_obj_set_style_text_font(vs->timbre_labels[i],
-                               &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(vs->timbre_labels[i], 8, 4 + i * 20);
-    lv_obj_add_flag(vs->timbre_labels[i], LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(vs->timbre_labels[i], on_timbre_click,
-                        LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    vs->dots[i] = lv_obj_create(vs->panel);
+    lv_obj_set_size(vs->dots[i], 8, 8);
+    lv_obj_set_pos(vs->dots[i], 120 + i * 16, 210);
+    lv_obj_set_style_bg_color(vs->dots[i], lv_color_hex(0x4B5563), 0);
+    lv_obj_set_style_bg_opa(vs->dots[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(vs->dots[i], 4, 0);
+    lv_obj_set_style_border_width(vs->dots[i], 0, 0);
+    lv_obj_clear_flag(vs->dots[i], LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   }
 
-  /* Cancel button */
-  vs->btn_cancel = lv_obj_create(vs->panel);
-  lv_obj_set_size(vs->btn_cancel, 70, 24);
-  lv_obj_set_pos(vs->btn_cancel, 30, 110);
-  lv_obj_set_style_bg_color(vs->btn_cancel, lv_color_hex(0x374151), 0);
-  lv_obj_set_style_bg_opa(vs->btn_cancel, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(vs->btn_cancel, 0, 0);
-  lv_obj_set_style_radius(vs->btn_cancel, 4, 0);
-  lv_obj_set_style_pad_all(vs->btn_cancel, 0, 0);
-  lv_obj_add_flag(vs->btn_cancel, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(vs->btn_cancel, on_voice_sel_cancel,
-                      LV_EVENT_CLICKED, NULL);
-  vs->cancel_label = lv_label_create(vs->btn_cancel);
-  lv_label_set_text(vs->cancel_label, "Cancel");
-  lv_obj_set_style_text_color(vs->cancel_label, C_TEXT_GRAY, 0);
-  lv_obj_set_style_text_font(vs->cancel_label, &lv_font_montserrat_14, 0);
-  lv_obj_center(vs->cancel_label);
+  /* ---- Code label (bottom-left corner) ---- */
+  vs->code_label = lv_label_create(vs->panel);
+  lv_label_set_text(vs->code_label, "");
+  lv_obj_set_style_text_color(vs->code_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(vs->code_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_pos(vs->code_label, 8, 212);
 
-  /* Confirm button */
-  vs->btn_confirm = lv_obj_create(vs->panel);
-  lv_obj_set_size(vs->btn_confirm, 70, 24);
-  lv_obj_set_pos(vs->btn_confirm, 130, 110);
-  lv_obj_set_style_bg_color(vs->btn_confirm, C_BLUE, 0);
-  lv_obj_set_style_bg_opa(vs->btn_confirm, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(vs->btn_confirm, 0, 0);
-  lv_obj_set_style_radius(vs->btn_confirm, 4, 0);
-  lv_obj_set_style_pad_all(vs->btn_confirm, 0, 0);
-  lv_obj_add_flag(vs->btn_confirm, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(vs->btn_confirm, on_voice_sel_confirm,
-                      LV_EVENT_CLICKED, NULL);
-  vs->confirm_label = lv_label_create(vs->btn_confirm);
-  lv_label_set_text(vs->confirm_label, "Confirm");
-  lv_obj_set_style_text_color(vs->confirm_label, C_TEXT, 0);
-  lv_obj_set_style_text_font(vs->confirm_label, &lv_font_montserrat_14, 0);
-  lv_obj_center(vs->confirm_label);
-
-  /* initial state */
+  /* Initial state */
   vs->gender_idx = 0;
   vs->timbre_idx = 0;
   voice_sel_refresh_timbres();
@@ -759,9 +850,8 @@ static void on_screen_long_press(lv_event_t *e) {
 static void on_float_ball_click(lv_event_t *e) {
   (void)e;
   if (s_state == CHAT_VOICE_SELECT) {
-    /* exit without saving */
-    ai_chat_ui_show_voice_selector(false);
-    ai_chat_ui_set_state(CHAT_IDLE);
+    /* In voice-select mode, float ball = cancel/back */
+    on_voice_sel_back(NULL);
   } else {
     /* enter voice selector */
     ai_chat_ui_show_voice_selector(true);
@@ -772,9 +862,9 @@ static void on_float_ball_click(lv_event_t *e) {
 static void create_float_ball(void) {
   /* A normal-sized 56x56 floating ball in the bottom-right corner,
    * acting as the voice-settings entry. */
-  const int size = 56;
-  const int x = 320 - size - 12;   /* 252 */
-  const int y = 240 - size - 12;   /* 172 */
+  const int size = 44;
+  const int x = 320 - size - 10;   /* 266 */
+  const int y = 240 - size - 10;   /* 186 */
 
   ui.float_ball = lv_obj_create(lv_screen_active());
   lv_obj_set_size(ui.float_ball, size, size);
@@ -794,8 +884,8 @@ static void create_float_ball(void) {
   /* hamburger menu icon: 3 short bars centered in the ball */
   for (int i = 0; i < 3; i++) {
     ui.float_ball_lines[i] = lv_obj_create(ui.float_ball);
-    lv_obj_set_size(ui.float_ball_lines[i], 28, 3);
-    lv_obj_set_pos(ui.float_ball_lines[i], 14, 16 + i * 11);
+    lv_obj_set_size(ui.float_ball_lines[i], 22, 3);
+    lv_obj_set_pos(ui.float_ball_lines[i], 11, 14 + i * 9);
     lv_obj_set_style_bg_color(ui.float_ball_lines[i], C_TEXT, 0);
     lv_obj_set_style_bg_opa(ui.float_ball_lines[i], LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(ui.float_ball_lines[i], 0, 0);
@@ -864,7 +954,16 @@ chat_state_t ai_chat_ui_get_state(void) {
 }
 
 void ai_chat_ui_set_state(chat_state_t state) {
+  /* Debounce: ignore rapid duplicate state changes within 300ms.
+   * SDK callbacks can fire IDLE->LISTENING->IDLE in quick succession,
+   * each triggering hide_all_viz + show + anim restart, which burns
+   * LVGL CPU and eventually stalls. */
+  static TickType_t s_last_change = 0;
+  TickType_t now = xTaskGetTickCount();
   if (state == s_state && state != CHAT_INTERRUPTED) return;
+  if (state == s_state && (now - s_last_change) * portTICK_PERIOD_MS < 300) return;
+  s_last_change = now;
+
   if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
     ESP_LOGE(TAG, "set_state: failed to acquire LVGL lock");
     return;
@@ -938,12 +1037,14 @@ void ai_chat_ui_set_state(chat_state_t state) {
       break;
 
     case CHAT_VOICE_SELECT:
-      show_obj(ui.idle.ring_outer);
-      show_obj(ui.idle.ring_mid);
-      show_obj(ui.idle.core);
+      /* Full-screen voice selection card.
+       * set_state() calls hide_all_viz() first, so re-show panel here.
+       * Panel children (buttons, labels, dots) are shown automatically. */
+      show_obj(ui.voice_sel.panel);
+      voice_sel_refresh_timbres();
       state_color = C_BLUE;
       state_text = "Voice";
-      hint_text = "Short: next  Long: confirm";
+      hint_text = " ";
       break;
 
     default:
@@ -953,6 +1054,8 @@ void ai_chat_ui_set_state(chat_state_t state) {
   lv_label_set_text(ui.state_label, state_text);
   lv_obj_set_style_text_color(ui.state_label, state_color, 0);
   lv_label_set_text(ui.hint_label, hint_text);
+
+  ESP_LOGI(TAG, "page -> %s", state_text);
   lvgl_port_unlock();
 }
 
@@ -1039,30 +1142,9 @@ void ai_chat_ui_show_voice_selector(bool show) {
     }
 
     voice_sel_refresh_timbres();
-
     show_obj(vs->panel);
-    show_obj(vs->title_label);
-    show_obj(vs->left_bg);
-    show_obj(vs->right_bg);
-    show_obj(vs->btn_cancel);
-    show_obj(vs->btn_confirm);
-    for (int i = 0; i < VOICE_GENDER_COUNT; i++) {
-      show_obj(vs->gender_labels[i]);
-    }
-    /* timbre_labels visibility handled by voice_sel_refresh_timbres */
   } else {
     hide_obj(vs->panel);
-    hide_obj(vs->title_label);
-    hide_obj(vs->left_bg);
-    hide_obj(vs->right_bg);
-    hide_obj(vs->btn_cancel);
-    hide_obj(vs->btn_confirm);
-    for (int i = 0; i < VOICE_GENDER_COUNT; i++) {
-      hide_obj(vs->gender_labels[i]);
-    }
-    for (int i = 0; i < 6; i++) {
-      hide_obj(vs->timbre_labels[i]);
-    }
   }
   lvgl_port_unlock();
 }
@@ -1115,5 +1197,66 @@ void ai_chat_ui_touch_indicator_hide(void)
 {
   if (ui.touch_dot) {
     lv_obj_set_style_opa(ui.touch_dot, LV_OPA_TRANSP, 0);
+  }
+}
+
+/* ===================================================================
+ *  Swipe detection for voice-select page.
+ *
+ *  Called from lvgl_port touch_read_cb with raw screen coordinates.
+ *  Tracks press -> release; if horizontal travel exceeds threshold
+ *  and vertical travel is small, fires prev/next.
+ *  Only active when state == CHAT_VOICE_SELECT.
+ * =================================================================== */
+#define SWIPE_THRESHOLD  40   /* min horizontal pixels for a swipe */
+
+void ai_chat_ui_touch_swipe(int x, int y, bool pressed)
+{
+  static bool  s_tracking = false;
+  static int   s_start_x  = 0;
+  static int   s_start_y  = 0;
+  static int   s_last_x   = 0;   /* last position while pressing */
+  static int   s_last_y   = 0;
+
+  /* Only track when in voice-select mode */
+  if (s_state != CHAT_VOICE_SELECT) {
+    s_tracking = false;
+    return;
+  }
+
+  if (pressed && !s_tracking) {
+    /* Finger just touched down */
+    s_tracking = true;
+    s_start_x = x;
+    s_start_y = y;
+    s_last_x = x;
+    s_last_y = y;
+  } else if (pressed && s_tracking) {
+    /* Finger still down - keep updating last position */
+    s_last_x = x;
+    s_last_y = y;
+  } else if (!pressed && s_tracking) {
+    /* Finger just lifted - check if it was a swipe.
+     * Use s_last_x/y (the last valid touch position before release),
+     * NOT the x/y args which are (0,0) when no touch is active. */
+    s_tracking = false;
+    int dx = s_last_x - s_start_x;
+    int dy = s_last_y - s_start_y;
+
+    /* Horizontal swipe: |dx| > threshold and |dx| > 2*|dy| */
+    if (dx > SWIPE_THRESHOLD && (dx > 2 * (dy > 0 ? dy : -dy))) {
+      /* right swipe -> previous */
+      voice_select_viz_t *vs = &ui.voice_sel;
+      vs->timbre_idx = (vs->timbre_idx - 1 + vs->timbre_count) % vs->timbre_count;
+      ESP_LOGI(TAG, "swipe right -> prev %d (dx=%d)", vs->timbre_idx, dx);
+      voice_sel_refresh_timbres();
+    } else if (dx < -SWIPE_THRESHOLD &&
+               (-dx > 2 * (dy > 0 ? dy : -dy))) {
+      /* left swipe -> next */
+      voice_select_viz_t *vs = &ui.voice_sel;
+      vs->timbre_idx = (vs->timbre_idx + 1) % vs->timbre_count;
+      ESP_LOGI(TAG, "swipe left -> next %d (dx=%d)", vs->timbre_idx, dx);
+      voice_sel_refresh_timbres();
+    }
   }
 }

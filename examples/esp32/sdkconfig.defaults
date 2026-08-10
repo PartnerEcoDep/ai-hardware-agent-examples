@@ -73,3 +73,15 @@ CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
 CONFIG_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
 CONFIG_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+# 开启 panic：若已注册看门狗的任务卡死，触发 panic 重启并留下 backtrace，
+# 而非静默挂死。IDLE 未注册所以不受影响。
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_TASK_WDT_PANIC=y
+
+# ---- LVGL 字体 ----
+# 启用 16 号 Montserrat，供语音选择面板放大字号使用
+CONFIG_LV_FONT_MONTSERRAT_16=y
+# 默认字体用 Montserrat 14（英文），不要用 CJK 字体做默认
+# 否则所有未显式指定字体的对象（主题、按钮内部 label 等）
+# 都会用 CJK 字体渲染英文，显示效果不一致
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
