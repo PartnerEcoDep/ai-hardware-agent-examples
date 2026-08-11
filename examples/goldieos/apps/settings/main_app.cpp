@@ -87,7 +87,7 @@ static void get_time_string(char* buf, size_t buf_size) {
     clock_gettime(CLOCK_REALTIME, &ts);
     struct tm* tm_info = localtime(&ts.tv_sec);
     int ms = ts.tv_nsec / 1000000;
-    strftime(buf, buf_size, "%Y-%m-%d %H:%M:%S", &tm_info);
+    strftime(buf, buf_size, "%Y-%m-%d %H:%M:%S", tm_info);
     size_t len = strlen(buf);
     snprintf(buf + len, buf_size - len, ".%03d", ms);
 #endif
@@ -191,7 +191,7 @@ static int read_image_file(const char* path, uint8_t** out_data, size_t* out_len
     *out_len = 0;
 
     osFileHandle f;
-    if (os_fopen(&f, path,OS_FILE_READ) != OS_RESULT_OK) {
+    if (os_fopen(&f, path, OS_FILE_READ) != OS_RESULT_OK) {
         printf("[Image] Failed to open file: %s\n", path);
         return -1;
     }
@@ -241,9 +241,9 @@ static int build_image_json(const char* base64_data, size_t base64_len, const ch
     cJSON* root = cJSON_CreateObject();
     if (!root) return -1;
 
-    static uint32_t s_img_event_count = 0;
+    static uint32_t s_img_event_counter = 0;
     char event_id[32];
-    snprintf(event_id, sizeof(event_id), "img_%u", s_img_event_count++);
+    snprintf(event_id, sizeof(event_id), "img_%u", s_img_event_counter++);
     cJSON_AddStringToObject(root, "event_id", event_id);
     cJSON_AddStringToObject(root, "type", "image");
 
@@ -256,7 +256,7 @@ static int build_image_json(const char* base64_data, size_t base64_len, const ch
     cJSON_AddStringToObject(image_obj, "format", format);
     cJSON_AddItemToObject(root, "image", image_obj);
 
-    char* json_str = cJSON_PrintFormated(root);
+    char* json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json_str) return -1;
     *out_json = json_str;
