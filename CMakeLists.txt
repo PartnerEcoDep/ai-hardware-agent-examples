@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
-project(ai_hardware_agent_examples VERSION 26.8.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/ConvaiVersion.cmake")
+project(ai_hardware_agent_examples
+    VERSION "${CONVAI_PROJECT_VERSION_BASE}"
+    LANGUAGES C CXX)
 
 # ====================================================================
 #  Global settings
@@ -15,6 +18,14 @@ if(MSVC)
 else()
     add_compile_options(-Wall -Wextra)
 endif()
+
+set(PROJECT_VERSION "${CONVAI_PROJECT_VERSION}")
+
+add_definitions(
+    -DPROJECT_VERSION="${PROJECT_VERSION}"
+)
+
+message(STATUS "PROJECT_VERSION = ${PROJECT_VERSION}")
 
 # ====================================================================
 #  Examples  (ws63 firmware / win simulator)
@@ -60,5 +71,3 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
 else()
     message(STATUS "CONVAI_PLATFORM not set or unsupported: '${CONVAI_PLATFORM}'. Supported platforms: ws63, win")
 endif()
-
-
