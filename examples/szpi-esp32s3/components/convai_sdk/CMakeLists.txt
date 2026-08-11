@@ -45,17 +45,14 @@ if(CONVAI_SDK_SOURCE_MANIFEST)
     # global CMake cache.
     set(CONVAI_PLATFORM "esp32s3")
 
-    # ESP-IDF evaluates component CMake files in an isolated scope where the
-    # standard PROJECT_VERSION can be empty even when the top-level project()
-    # has a VERSION. Bridge the shared release version explicitly for src/.
+    # ESP-IDF evaluates component CMake files in an isolated scope. Require the
+    # shared version explicitly before forwarding it to src/.
     if(NOT DEFINED CONVAI_PROJECT_VERSION OR
        CONVAI_PROJECT_VERSION STREQUAL "")
         message(FATAL_ERROR
             "CONVAI_PROJECT_VERSION is not defined; include the shared "
             "cmake/ConvaiVersion.cmake before the ESP-IDF project() call")
     endif()
-    set(PROJECT_VERSION "${CONVAI_PROJECT_VERSION}")
-
     add_subdirectory(
         "${CONVAI_SDK_SOURCE_DIR}"
         "${CMAKE_CURRENT_BINARY_DIR}/convai_sdk_source"
@@ -89,6 +86,13 @@ if(CONVAI_SDK_SOURCE_MANIFEST)
     # for declaring any idf:: component dependencies it directly uses.
     target_include_directories("${CONVAI_SDK_REAL_TARGET}" PUBLIC
         "${CONVAI_REPO_ROOT}/include")
+
+    # CMake variables are not visible to C/C++ sources by themselves. Export
+    # the resolved version only for a source-built SDK target; the prebuilt
+    # archive already contains the version it was compiled with.
+    target_compile_definitions("${CONVAI_SDK_REAL_TARGET}" PRIVATE
+        CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
+    )
 
     target_link_libraries(${COMPONENT_LIB} INTERFACE convai_sdk)
 

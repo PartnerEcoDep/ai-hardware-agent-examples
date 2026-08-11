@@ -19,13 +19,7 @@ else()
     add_compile_options(-Wall -Wextra)
 endif()
 
-set(PROJECT_VERSION "${CONVAI_PROJECT_VERSION}")
-
-add_definitions(
-    -DPROJECT_VERSION="${PROJECT_VERSION}"
-)
-
-message(STATUS "PROJECT_VERSION = ${PROJECT_VERSION}")
+message(STATUS "CONVAI_PROJECT_VERSION = ${CONVAI_PROJECT_VERSION}")
 
 # ====================================================================
 #  Examples  (ws63 firmware / win simulator)
@@ -54,6 +48,9 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
     )
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        target_compile_definitions(convai_sdk PRIVATE
+            CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
+        )
     endif()
     add_subdirectory(examples/goldieos)
 elseif(CONVAI_PLATFORM STREQUAL "goldieos")
@@ -66,6 +63,9 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     message(STATUS "CONVAI_PLATFORM=goldieos: building Windows simulator (goldieos.exe)")
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        target_compile_definitions(convai_sdk PRIVATE
+            CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
+        )
     endif()
     add_subdirectory(examples/goldieos)
 else()
