@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
-project(ai_hardware_agent_examples VERSION 26.8.0 LANGUAGES C CXX)
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/ConvaiVersion.cmake")
+project(ai_hardware_agent_examples
+    VERSION "${CONVAI_PROJECT_VERSION_BASE}"
+    LANGUAGES C CXX)
 
 # ====================================================================
 #  Global settings
@@ -15,6 +18,8 @@ if(MSVC)
 else()
     add_compile_options(-Wall -Wextra)
 endif()
+
+message(STATUS "CONVAI_PROJECT_VERSION = ${CONVAI_PROJECT_VERSION}")
 
 # ====================================================================
 #  Examples  (ws63 firmware / win simulator)
@@ -43,6 +48,9 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
     )
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        target_compile_definitions(convai_sdk PRIVATE
+            CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
+        )
     endif()
     add_subdirectory(examples/goldieos)
 elseif(CONVAI_PLATFORM STREQUAL "goldieos")
@@ -55,10 +63,11 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     message(STATUS "CONVAI_PLATFORM=goldieos: building Windows simulator (goldieos.exe)")
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        target_compile_definitions(convai_sdk PRIVATE
+            CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
+        )
     endif()
     add_subdirectory(examples/goldieos)
 else()
     message(STATUS "CONVAI_PLATFORM not set or unsupported: '${CONVAI_PLATFORM}'. Supported platforms: ws63, win")
 endif()
-
-

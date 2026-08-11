@@ -312,11 +312,11 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
     add_custom_command(TARGET ws63_firmware POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${OUTPUT_DIR}/goldieos.fwpkg
-            ${OUTPUT_DIR}/goldieos-${PROJECT_VERSION}.fwpkg
+            ${OUTPUT_DIR}/goldieos-${CONVAI_PROJECT_VERSION}.fwpkg
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${OUTPUT_DIR}/goldieos.bin
-            ${OUTPUT_DIR}/goldieos-${PROJECT_VERSION}.bin
-        COMMENT "Versioned firmware copy: goldieos-${PROJECT_VERSION}.fwpkg / .bin"
+            ${OUTPUT_DIR}/goldieos-${CONVAI_PROJECT_VERSION}.bin
+        COMMENT "Versioned firmware copy: goldieos-${CONVAI_PROJECT_VERSION}.fwpkg / .bin"
     )
 
     message(STATUS "GoldieOS WS63 configured. Compiler: ${CMAKE_C_COMPILER}")
@@ -441,8 +441,8 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     add_custom_command(TARGET goldieos POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:goldieos>
-            $<TARGET_FILE_DIR:goldieos>/goldieos-${PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>
-        COMMENT "Versioned artifact copy: goldieos-${PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>"
+            $<TARGET_FILE_DIR:goldieos>/goldieos-${CONVAI_PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>
+        COMMENT "Versioned artifact copy: goldieos-${CONVAI_PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>"
     )
 
     message(STATUS "GoldieOS WIN simulator configured. Compiler: ${CMAKE_C_COMPILER}")
