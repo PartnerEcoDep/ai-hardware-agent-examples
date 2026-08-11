@@ -10,10 +10,15 @@
 #include <stddef.h>
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
+#include "esp_err.h"
+#include "audio_codec.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/** Name under which this board's codec is registered in the factory. */
+#define AUDIO_CODEC_LCKFB_SZPI_NAME "lckfb-szpi"
 
 /**
  * @brief 音频句柄
@@ -82,6 +87,19 @@ int audio_lckfb_set_volume(audio_lckfb_t *audio, int vol);
  * @return 0 成功
  */
 int audio_lckfb_set_mic_gain(audio_lckfb_t *audio, int gain_db);
+
+/**
+ * @brief 本板 codec 的抽象实例 (audio_codec_t 适配层)
+ *
+ * 硬件句柄由实现文件内部持有, 调用方只通过 audio_codec_t 的函数指针访问。
+ */
+extern audio_codec_t audio_codec_lckfb_szpi;
+
+/**
+ * @brief 将本板 codec 注册到 audio_codec 工厂
+ * @return ESP_OK 成功
+ */
+esp_err_t audio_codec_lckfb_register(void);
 
 #ifdef __cplusplus
 }

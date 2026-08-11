@@ -13,6 +13,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,8 +39,12 @@ typedef chat_state_t voice_state_t;
 #define STATE_VOICE_SELECT CHAT_VOICE_SELECT
 #define STATE_DISCONNECTED CHAT_DISCONNECTED
 
-void ai_chat_ui_init(void);
+esp_err_t ai_chat_ui_init(void);
 void ai_chat_ui_tick(void);
+
+/* Panel interface used by the UI panel factory. */
+void ai_chat_ui_show(void);
+void ai_chat_ui_hide(void);
 voice_state_t ai_chat_ui_get_state(void);
 void ai_chat_ui_set_state(chat_state_t state);
 void ai_chat_ui_set_network(bool online);
