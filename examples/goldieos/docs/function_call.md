@@ -1,6 +1,6 @@
 # ConvAI Examples Function Call 最佳实践
 
-本文档基于华为 ConvAI SDK，说明如何在 Examples 中实现 Function Call 功能。以**设置闹钟**为例。
+本文档基于华为 ConvAI SDK，说明如何在 Examples 中实现 Function Call 功能。
 
 ---
 
@@ -12,25 +12,31 @@
 4. [回复机制](#回复机制)
 5. [注册回调](#注册回调)
 6. [设置闹钟完整示例](#设置闹钟完整示例)
-7. [协议参考](#协议参考)
+7. [表情切换示例（set_face）](#表情切换示例set_face)
+8. [协议参考](#协议参考)
 
 ---
 
 ## 架构概述
 
-所有来自 AI 的 Function Call 在 `apps/settings/main_app.cpp` 的 `cloud_message_callback` 中统一处理。
+Function Call 处理分为两层：
+
+- **通用分派框架**（`sdk_integration/convai_func_dispatch.c/.h`）：app 无关。接收 AI 消息、解析 JSON、遍历 calls、按名字查注册表分派 handler、自动构建回复并发送。任何 app 都可复用。
+- **业务 handler**（`apps/settings/convai_func_handlers.c/.h`）：settings app 专属。实现具体功能（表情、闹钟、天气），通过 `func_dispatch_register()` 注册到分派框架。
 
 ```
 Cloud AI Server
     │  WebSocket
     ▼
-ConvAI SDK → convai_bridge → cloud_message_callback()
+ConvAI SDK → convai_bridge → func_dispatch_message_cb()   [sdk_integration/通用层]
                                  │
                                  ├─ 解析 type / calls[]
-                                 ├─ 查表 func_call_registry[]
-                                 ├─ 调用匹配的 handler
-                                 └─ 自动构建回复 function_call_output
+                                 ├─ 遍历 s_registry[] (运行时注册的 name→handler 表)
+                                 ├─ 调用匹配的 handler       [apps/settings/业务层]
+                                 └─ 自动构建回复 function_call_output 并 send
 ```
+
+**为什么分两层**：通用层只做"解析+分派+回复"的管道工作，不含任何业务知识；业务层只写 handler 逻辑，不关心消息格式和回复组装。新增 app 时复用通用层，只写自己的 handler。
 
 ---
 
@@ -38,11 +44,15 @@ ConvAI SDK → convai_bridge → cloud_message_callback()
 
 ### 第一步：编写 handler 函数
 
+在 `apps/settings/convai_func_handlers.c` 中添加：
+
 ```c
-static bool handle_xxx(const char *call_id, cJSON *args_json,
-                        char *output_buf, size_t buf_size,
-                        const char **output_str)
+static int handle_xxx(const char *call_id, cJSON *args_json,
+                      char *output_buf, size_t buf_size,
+                      const char **output_str)
 {
+    (void)call_id;
+
     // 1. 解析必选参数
     cJSON *param = cJSON_GetObjectItem(args_json, "param_name");
     if (!param || !cJSON_IsString(param)) {
@@ -61,27 +71,29 @@ static bool handle_xxx(const char *call_id, cJSON *args_json,
 }
 ```
 
-### 第二步：注册到分发表
+### 第二步：在 func_handlers_register() 中注册
 
 ```c
-static const struct {
-    const char      *name;
-    FuncCallHandler  handler;
-} func_call_registry[] = {
-    { "set_alarm",   handle_set_alarm },
-    { "get_weather", handle_get_weather },
-    { "xxx",         handle_xxx },          // ← 新增这一行
-};
+void func_handlers_register(void)
+{
+    func_dispatch_init();
+    func_dispatch_register("set_face",     handle_emotion);
+    func_dispatch_register("set_alarm",    handle_set_alarm);
+    func_dispatch_register("get_weather",  handle_get_weather);
+    func_dispatch_register("xxx",          handle_xxx);   // ← 新增这一行
+}
 ```
 
-两步完成，`cloud_message_callback` 中的主循环会自动完成 JSON 解析、遍历 calls、分派 handler、构建回复。
+两步完成。分派框架在收到 `response.function_call_arguments.done` 消息时自动完成 JSON 解析、遍历 calls、按名字匹配 handler、构建回复并发送。
 
 ---
 
 ## Handler 函数签名
 
+handler 类型定义在 `sdk_integration/convai_func_dispatch.h`：
+
 ```c
-typedef bool (*FuncCallHandler)(
+typedef bool (*convai_func_handler_t)(
     const char *call_id,      // function call 的唯一 ID
     cJSON *args_json,         // arguments 已解析为 cJSON 对象
     char *output_buf,         // 256 字节栈缓冲区，供 snprintf 使用
@@ -92,13 +104,13 @@ typedef bool (*FuncCallHandler)(
 
 | 参数 | 说明 |
 |------|------|
-| `call_id` | Function Call 唯一 ID（一般无需使用，主循环自动对应） |
-| `args_json` | `arguments` 字段经 `cJSON_Parse` 解析后的对象 |
+| `call_id` | Function Call 唯一 ID（一般无需使用，分派框架自动对应回复） |
+| `args_json` | `arguments` 字段经 `cJSON_Parse` 解析后的对象（handler 不要 free，框架统一释放） |
 | `output_buf` | 256 字节栈缓冲区 |
 | `buf_size` | 缓冲区大小 |
 | `output_str` | 输出指针，指向回复的 JSON 字符串 |
 
-**返回值**：`true` 表示已处理。
+**返回值**：`true` = 已识别并处理（回复中 success/error 都算处理了）；`false` = 参数完全未识别。**返回值与回复是否发送无关**——`*output_str` 总会被发送。`false` 仅让分派框架多打一条 "Unhandled function" 诊断日志。成功/失败由回复 JSON 的 `result` 字段表达，与返回值正交：一个"处理了但失败"的调用（如闹钟时间非法）返回 `true` + `{"result":"error",...}`。
 
 ---
 
@@ -147,11 +159,24 @@ handler 只需设置 `*output_str`，主循环自动构建完整的回复 JSON�
 
 ## 注册回调
 
-在应用初始化时，通过 `convai_bridge_on_message` 注册回调：
+分派框架提供两个接口（`sdk_integration/convai_func_dispatch.h`）：
 
 ```c
-convai_bridge_on_message(cloud_message_callback);
+void func_dispatch_init(void);                                      // 挂消息回调到 bridge
+int  func_dispatch_register(const char *name, convai_func_handler_t handler);  // 注册 handler
+void func_dispatch_unregister(void);                                // 注销（清空注册表 + 摘回调）
 ```
+
+settings app 在 `convai_func_handlers.c` 里封装了 `func_handlers_register/unregister`，在生命周期里成对调用：
+
+| 时机 | 调用 |
+|------|------|
+| `goldie_app_run` | `func_handlers_register()`（init + 注册所有 handler） |
+| `goldie_app_suspend` | `func_handlers_unregister()` |
+| `goldie_app_resume` | `func_handlers_register()` |
+| `goldie_app_exit` | `func_handlers_unregister()` |
+
+`func_dispatch_register` 同名注册会覆盖（last wins），最多 16 个（`FUNC_DISPATCH_MAX`）。注册表在 `unregister` 时清空，便于 app 反复进出。
 
 ---
 
@@ -178,18 +203,19 @@ convai_bridge_on_message(cloud_message_callback);
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `time` | string | 闹钟时间 `HH:MM` |
-| `label` | string | 闹钟标签 |
-| `repeat` | string | `none`（一次性）、`daily`（每天）、`weekdays`（工作日） |
-| `weekdays` | bool[] | 可选，按星期几设置的布尔数组 |
+| `time` | string | 闹钟时间 `HH:MM`（标准格式，优先解析） |
+| `hour` / `minute` | int | 兼容旧格式：未提供 `time` 时用这两个数字字段 |
+| `label` | string | 闹钟标签（当前仅日志记录，AlarmInfo 无此字段） |
+| `repeat` | string | `none`（一次性）、`daily`（每天）、`weekdays`（工作日）；未知值默认每天 |
+| `weekdays` | bool[] | 可选，按星期几设置的布尔数组（优先级高于 `repeat`） |
 | `enabled` | bool | 可选，是否启用，默认 `true` |
 
 ### Handler 实现
 
 ```c
-static bool handle_set_alarm(const char *call_id, cJSON *args_json,
-                              char *output_buf, size_t buf_size,
-                              const char **output_str)
+static int handle_set_alarm(const char *call_id, cJSON *args_json,
+                            char *output_buf, size_t buf_size,
+                            const char **output_str)
 {
     (void)call_id;
 
@@ -252,17 +278,61 @@ static bool handle_set_alarm(const char *call_id, cJSON *args_json,
 }
 ```
 
-### 注册到分发表
+### 注册到分派框架
+
+在 `convai_func_handlers.c` 的 `func_handlers_register()` 中注册：
 
 ```c
-static const struct {
-    const char      *name;
-    FuncCallHandler  handler;
-} func_call_registry[] = {
-    { "set_alarm",   handle_set_alarm },
-    { "get_weather", handle_get_weather },
-};
+void func_handlers_register(void)
+{
+    func_dispatch_init();
+    func_dispatch_register("set_alarm",    handle_set_alarm);
+    func_dispatch_register("get_weather",  handle_get_weather);
+    /* ... 其它 handler ... */
+}
 ```
+
+---
+
+## 表情切换示例（set_face）
+
+AI 在对话中下发 `set_face` 切换设备表情页的显示表情。handler 不直接操作 UI，而是调 `talk_page_set_emotion()` 设状态，由 talk_page 模块的动画线程在下帧渲染时应用。
+
+```c
+static bool handle_emotion(const char *call_id, cJSON *args_json,
+                           char *output_buf, size_t buf_size,
+                           const char **output_str)
+{
+    (void)call_id;
+    cJSON *emotion_item = cJSON_GetObjectItem(args_json, "face_expression");
+    if (!emotion_item || !cJSON_IsString(emotion_item)) {
+        *output_str = "{\"result\":\"error\",\"message\":\"missing face_expression\"}";
+        return true;   /* 已识别为 set_face，参数缺失 → error 回复，仍算处理了 */
+    }
+
+    const char *emotion = emotion_item->valuestring;
+    int new_emotion;
+    if      (strcmp(emotion, "neutral") == 0) new_emotion = EMOTION_NEUTRAL;
+    else if (strcmp(emotion, "happy")   == 0) new_emotion = EMOTION_HAPPY;
+    else if (strcmp(emotion, "angry")   == 0) new_emotion = EMOTION_ANGRY;
+    else if (strcmp(emotion, "sad")     == 0) new_emotion = EMOTION_SAD;
+    else if (strcmp(emotion, "doubt")   == 0) new_emotion = EMOTION_DOUBT;
+    else {
+        /* 不支持的 emotion 返回 error，让后端知道端侧不支持（不静默落 neutral） */
+        snprintf(output_buf, buf_size,
+                 "{\"result\":\"error\",\"message\":\"unsupported emotion: %s\"}", emotion);
+        *output_str = output_buf;
+        return true;   /* 同上：已处理，error 回复 */
+    }
+    talk_page_set_emotion(new_emotion);   /* 动画线程下帧应用 */
+    return true;
+}
+```
+
+**设计要点**：
+- handler 只做"参数解析 + 状态设置"，UI 渲染由 talk_page 动画线程异步完成（解耦：functioncall 处理在 bridge 线程，UI 在动画线程）。
+- 返回值恒为 `true`（set_face 总被识别）。参数缺失 / 不支持的 emotion 走 error 回复，让后端感知端侧能力——`result` 字段表达成败，返回值只表达"是否识别此函数"。
+- 支持的 5 种表情：`neutral` / `happy` / `angry` / `sad` / `doubt`。
 
 ---
 
@@ -309,11 +379,12 @@ static const struct {
 
 ### 已注册的 Function Calls
 
-| name | 功能 | 参数 |
-|------|------|------|
-| `set_alarm` | 设置闹钟 | `{"time":"16:00","label":"开会","repeat":"weekdays"}` |
-| `get_weather` | 查询天气 | `{"location":"深圳"}` |
+| name | 功能 | 参数 | 实现位置 |
+|------|------|------|------|
+| `set_face` | 切换表情页表情 | `{"face_expression":"happy"}` （neutral/happy/angry/sad/doubt，不支持返回 error） | `convai_func_handlers.c` → `talk_page_set_emotion()` |
+| `set_alarm` | 设置闹钟 | `{"time":"16:00","label":"开会","repeat":"weekdays"}` | `convai_func_handlers.c` → AlarmService |
+| `get_weather` | 查询天气 | `{"location":"深圳"}` | `convai_func_handlers.c`（占位实现，无 HTTP 能力） |
 
 ---
 
-> **版本信息：** 本文档基于华为 ConvAI SDK 26.6.0 版本编写。
+> **版本信息：** 本文档基于华为 ConvAI SDK 26.8.0 版本编写。

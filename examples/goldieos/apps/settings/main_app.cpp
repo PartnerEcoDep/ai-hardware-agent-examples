@@ -202,6 +202,10 @@ static char current_apikey[MAX_CLOUD_APIKEY_SIZE];
 static int cloud_current_cfg_page = CLOUD_AVATAR_PAGE;
 static convai_status_e sdk_status = CONVAI_STATUS_IDLE;
 
+/* talk page (emotion display) + function-call handlers — see sdk_integration/ */
+#include "convai_talk_page.h"
+#include "convai_func_handlers.h"
+
 /* backup for rollback on convai_update failure */
 static int backup_avatrid = 0;
 static int backup_voiceid = 0;
@@ -279,15 +283,31 @@ static void cloud_status_callback(convai_status_e status) {
     switch (status) {
         case CONVAI_STATUS_IDLE:
             text = "空闲";   color = 0x1082;
+            /* 异常终止(服务端错误/超时直返 IDLE, 无 ANSWER_FINISHED) 也切回 cloud.
+             * stop_and_hide 的 visible 守卫: 会话起始 IDLE 是 no-op. */
+            talk_page_stop_and_hide();
             break;
         case CONVAI_STATUS_LISTENING:
             text = "倾听中"; color = 0x0410; break;
         case CONVAI_STATUS_THINKING:
             text = "思考中"; color = 0xFC00; break;
         case CONVAI_STATUS_ANSWERING:
-            text = "回答中"; color = 0x07E0; break;
+            text = "回答中"; color = 0x07E0;
+            /* 每次 AI 回答都切到表情页(talk page), 默认 neutral 表情.
+             * 若 AI 下发 emotion functioncall, handle_emotion 通过
+             * talk_page_set_emotion 设表情, anim 线程下帧切对应表情.
+             * talk_page_play_animation 启动 flush(线程常驻). */
+            if (!talk_page_is_visible()) {
+                talk_page_set_avatar(current_avatrid);
+                talk_page_show();
+                talk_page_play_animation();
+            }
+            break;
         case CONVAI_STATUS_INTERRUPTED:
-            text = "已打断"; color = 0xF800; break;
+            text = "已打断"; color = 0xF800;
+            /* 打断也切回 cloud: AI 说话被中断, 用户要操作 */
+            talk_page_stop_and_hide();
+            break;
         case CONVAI_STATUS_ANSWER_FINISHED:
             text = "回答完毕"; color = 0x0410;
             /* Print uplink (mic) + downlink (playback) drop stats for this turn.
@@ -310,6 +330,8 @@ static void cloud_status_callback(convai_status_e status) {
                     last_dl_drop = dl_drop;
                 }
             }
+            /* AI 说完切回 cloud: 让用户操作(PTT 等). 停动画 flush. */
+            talk_page_stop_and_hide();
             break;
         default: break;
     }
@@ -324,10 +346,15 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
     switch (event_type) {
         case CONVAI_EV_CONNECTED:
             color = 0x07E0; text = "● 已连接";
+            /* PTT 模式下连接成功时显示"按住说话"按钮 */
+            if (convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_PTT) {
+                ButtonView_ptttalk->setVisible(true);
+            }
             break;
         case CONVAI_EV_DISCONNECTED:
         case CONVAI_EV_FAILED:
             color = 0x0000; text = "● 未连接";
+            talk_page_set_emotion(EMOTION_NEUTRAL);
             /* Print uplink/downlink drop stats on disconnect so we can see the
              * quality of this session just before it ended. */
             {
@@ -342,306 +369,13 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
                     printf("[AI Settings] downlink: dropped_bytes=%u (overrun)\n", dl_drop);
                 }
             }
+            ButtonView_ptttalk->setVisible(false);  /* 断开连接时隐藏 PTT 按钮 */
             break;
         default: return;
     }
     LabelView_status_conn->setColor(color);
     LabelView_status_conn->setText(text);
     if (info) printf("[AI Settings] EVENT: %s (%s)\n", text, info);
-}
-
-/* ================================================================
- * Function Call Handler Registry
- *
- * 新增 function call 只需:
- *   1. 编写一个 handler 函数（签名见 FuncCallHandler）
- *   2. 在 func_call_registry[] 中添加一行 { "name", handler }
- * ================================================================ */
-
-/* handler 返回值: true=已处理, false=未识别 */
-/* output_str 默认指向成功消息, handler 可通过 output_buf 自定义回复 */
-typedef bool (*FuncCallHandler)(const char *call_id, cJSON *args_json,
-                                 char *output_buf, size_t buf_size,
-                                 const char **output_str);
-
-/* ---- 各 function call handler 实现 ---- */
-
-static bool handle_emotion(const char *call_id, cJSON *args_json,
-                            char *output_buf, size_t buf_size,
-                            const char **output_str)
-{
-    (void)call_id; (void)output_buf; (void)buf_size; (void)output_str;
-
-    cJSON *emotion_item = cJSON_GetObjectItem(args_json, "emotion");
-    if (!emotion_item || !cJSON_IsString(emotion_item)) return true; /* 静默忽略缺参数 */
-
-    const char *emotion = emotion_item->valuestring;
-    printf("[AI Settings] EMOTION: %s\n", emotion);
-
-    /* Emotion animation removed — just log it. */
-    return true;
-}
-
-static bool handle_set_alarm(const char *call_id, cJSON *args_json,
-                              char *output_buf, size_t buf_size,
-                              const char **output_str)
-{
-    (void)call_id;
-
-    int hour   = 0;
-    int minute = 0;
-    bool time_parsed = false;
-
-    /* ---- 格式 A: "time": "HH:MM" (AI 下发的标准格式) ---- */
-    cJSON *time_item = cJSON_GetObjectItem(args_json, "time");
-    if (time_item && cJSON_IsString(time_item)) {
-        const char *time_str = time_item->valuestring;
-        if (strlen(time_str) == 5 && time_str[2] == ':') {
-            hour   = (time_str[0] - '0') * 10 + (time_str[1] - '0');
-            minute = (time_str[3] - '0') * 10 + (time_str[4] - '0');
-            time_parsed = true;
-        }
-    }
-
-    /* ---- 格式 B: "hour" / "minute" 数字 (兼容旧格式) ---- */
-    if (!time_parsed) {
-        cJSON *hour_item   = cJSON_GetObjectItem(args_json, "hour");
-        cJSON *minute_item = cJSON_GetObjectItem(args_json, "minute");
-        if (hour_item && cJSON_IsNumber(hour_item) &&
-            minute_item && cJSON_IsNumber(minute_item)) {
-            hour   = hour_item->valueint;
-            minute = minute_item->valueint;
-            time_parsed = true;
-        }
-    }
-
-    if (!time_parsed) {
-        *output_str = "{\"result\":\"error\",\"message\":\"缺少time参数,格式:\\\"HH:MM\\\"\"}";
-        printf("[AI Settings] SET_ALARM ERROR: missing time\n");
-        return true;
-    }
-
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-        *output_str = "{\"result\":\"error\",\"message\":\"时间范围无效\"}";
-        printf("[AI Settings] SET_ALARM ERROR: invalid time %d:%d\n", hour, minute);
-        return true;
-    }
-
-    AlarmService *alarm_svc = (AlarmService*)get_service(ALARM_SERVICE_INDEX);
-    if (!alarm_svc) {
-        *output_str = "{\"result\":\"error\",\"message\":\"闹钟服务不可用\"}";
-        printf("[AI Settings] SET_ALARM ERROR: service not available\n");
-        return true;
-    }
-
-    AlarmInfo alarm;
-    memset(&alarm, 0, sizeof(AlarmInfo));
-    alarm.m_hour     = (char)hour;
-    alarm.m_min      = (char)minute;
-    alarm.enabled    = true;
-    alarm.ring_index = 0;
-
-    /* label: 闹钟名称 (AlarmInfo 无此字段, 仅日志记录) */
-    cJSON *label_item = cJSON_GetObjectItem(args_json, "label");
-    const char *label = (label_item && cJSON_IsString(label_item))
-                        ? label_item->valuestring : NULL;
-
-    /* ---- 解析 repeat / weekdays ---- */
-    /* 优先级: weekdays数组 > repeat字符串 > 默认全选 */
-    cJSON *weekdays_item = cJSON_GetObjectItem(args_json, "weekdays");
-    cJSON *repeat_item   = cJSON_GetObjectItem(args_json, "repeat");
-
-    if (weekdays_item && cJSON_IsArray(weekdays_item)) {
-        /* 格式 B: weekdays 数组 */
-        int sz = cJSON_GetArraySize(weekdays_item);
-        for (int w = 0; w < 7 && w < sz; w++) {
-            cJSON *d = cJSON_GetArrayItem(weekdays_item, w);
-            alarm.weekdays[w] = (d && cJSON_IsTrue(d));
-        }
-    } else if (repeat_item && cJSON_IsString(repeat_item)) {
-        /* 格式 A: repeat 字符串映射 */
-        const char *repeat = repeat_item->valuestring;
-        if (strcmp(repeat, "none") == 0) {
-            /* 一次性闹钟: 全部不选 (当前系统行为=每天响, 需用户手动删除) */
-            /* (不设置任何 weekday, 保持 memset 的 false) */
-        } else if (strcmp(repeat, "daily") == 0) {
-            for (int w = 0; w < 7; w++) alarm.weekdays[w] = true;
-        } else if (strcmp(repeat, "weekdays") == 0) {
-            /* 周一~周五 (index 0~4) */
-            for (int w = 0; w < 5; w++) alarm.weekdays[w] = true;
-        } else {
-            /* 未知 repeat 值, 默认每天 */
-            for (int w = 0; w < 7; w++) alarm.weekdays[w] = true;
-        }
-    } else {
-        /* 都没传, 默认全选 */
-        for (int w = 0; w < 7; w++) alarm.weekdays[w] = true;
-    }
-
-    /* enabled（可选，默认 true） */
-    cJSON *enabled_item = cJSON_GetObjectItem(args_json, "enabled");
-    if (enabled_item && cJSON_IsBool(enabled_item))
-        alarm.enabled = cJSON_IsTrue(enabled_item) ? true : false;
-
-    printf("[AI Settings] SET_ALARM: %02d:%02d, label=%s, enabled=%d\n",
-           alarm.m_hour, alarm.m_min, label ? label : "(none)", alarm.enabled);
-
-    int ret = alarm_svc->add_alarm(&alarm);
-    if (ret >= 0) {
-        snprintf(output_buf, buf_size,
-                 "{\"result\":\"success\",\"message\":\"闹钟已设置\",\"index\":%d}", ret);
-        *output_str = output_buf;
-        printf("[AI Settings] SET_ALARM OK: index=%d\n", ret);
-    } else if (ret == -2) {
-        *output_str = "{\"result\":\"error\",\"message\":\"闹钟已满,最多10个\"}";
-        printf("[AI Settings] SET_ALARM ERROR: max alarms reached\n");
-    } else {
-        snprintf(output_buf, buf_size,
-                 "{\"result\":\"error\",\"message\":\"添加失败,错误码:%d\"}", ret);
-        *output_str = output_buf;
-        printf("[AI Settings] SET_ALARM ERROR: ret=%d\n", ret);
-    }
-
-    return true;
-}
-
-/* ---- get_weather: 查询天气 ---- */
-/* 设备端无 HTTP 能力, 仅解析 location 并确认; 实际天气数据由 AI 在对话中提供 */
-static bool handle_get_weather(const char *call_id, cJSON *args_json,
-                                char *output_buf, size_t buf_size,
-                                const char **output_str)
-{
-    (void)call_id;
-
-    cJSON *loc_item = cJSON_GetObjectItem(args_json, "location");
-    const char *location = (loc_item && cJSON_IsString(loc_item))
-                           ? loc_item->valuestring : NULL;
-
-    if (!location) {
-        *output_str = "{\"result\":\"error\",\"message\":\"缺少location参数\"}";
-        printf("[AI Settings] GET_WEATHER ERROR: missing location\n");
-        return true;
-    }
-
-    printf("[AI Settings] GET_WEATHER: location=%s\n", location);
-
-    /* TODO: 若后续设备支持 HTTP, 可在此调用天气 API */
-    snprintf(output_buf, buf_size,
-             "{\"result\":\"success\",\"message\":\"晴天\","
-             "\"location\":\"%s\"}", location);
-    *output_str = output_buf;
-
-    return true;
-}
-
-/* ---- Handler Registry ---- */
-/* 新增 function call 在这里添加一行即可 */
-static const struct {
-    const char      *name;
-    FuncCallHandler  handler;
-} func_call_registry[] = {
-    { "emotion",     handle_emotion },
-    { "set_alarm",   handle_set_alarm },
-    { "get_weather", handle_get_weather },
-};
-
-static const int kFuncCallRegistrySize =
-    sizeof(func_call_registry) / sizeof(func_call_registry[0]);
-
-/* ---- 通用消息回调 ---- */
-static void cloud_message_callback(const char *json_str)
-{
-    if (!json_str) return;
-
-    cJSON *root = cJSON_Parse(json_str);
-    if (!root) return;
-
-    cJSON *type_item = cJSON_GetObjectItem(root, "type");
-    if (!type_item || !cJSON_IsString(type_item)) {
-        cJSON_Delete(root);
-        return;
-    }
-
-    const char *type_str = type_item->valuestring;
-
-    if (strcmp(type_str, "response.function_call_arguments.done") != 0) {
-        cJSON_Delete(root);
-        return;
-    }
-
-    cJSON *calls = cJSON_GetObjectItem(root, "calls");
-    if (!calls || !cJSON_IsArray(calls)) {
-        printf("[AI Settings] WARNING: missing 'calls' array\n");
-        cJSON_Delete(root);
-        return;
-    }
-
-    int call_count = cJSON_GetArraySize(calls);
-    printf("\n");
-    printf("========================================\n");
-    printf("FunctionCall Received (%d calls)\n", call_count);
-    printf("========================================\n");
-
-    cJSON *response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "type", "conversation.items.create");
-    cJSON *items = cJSON_AddArrayToObject(response, "items");
-
-    for (int i = 0; i < call_count; i++) {
-        cJSON *call = cJSON_GetArrayItem(calls, i);
-        if (!call) continue;
-
-        const char *call_id   = cJSON_GetStringValue(cJSON_GetObjectItem(call, "call_id"));
-        const char *name      = cJSON_GetStringValue(cJSON_GetObjectItem(call, "name"));
-        const char *arguments = cJSON_GetStringValue(cJSON_GetObjectItem(call, "arguments"));
-
-        printf("\n");
-        printf("call_id=%s\n",  call_id   ? call_id   : "(null)");
-        printf("name=%s\n",     name      ? name      : "(null)");
-        printf("arguments=%s\n", arguments ? arguments : "(null)");
-
-        /* ---- 输出缓冲区与默认回复 ---- */
-        char output_buf[256];
-        const char *output_str = "{\"result\":\"success\",\"message\":\"成功\"}";
-
-        /* ---- 解析 arguments 并分派到对应 handler ---- */
-        cJSON *args_json = arguments ? cJSON_Parse(arguments) : NULL;
-
-        if (name && args_json) {
-            bool handled = false;
-            for (int h = 0; h < kFuncCallRegistrySize; h++) {
-                if (strcmp(name, func_call_registry[h].name) == 0) {
-                    handled = func_call_registry[h].handler(
-                        call_id, args_json, output_buf, sizeof(output_buf), &output_str);
-                    break;
-                }
-            }
-            if (!handled) {
-                printf("[AI Settings] Unhandled function: %s\n", name ? name : "(null)");
-            }
-        }
-
-        if (args_json) cJSON_Delete(args_json);
-
-        /* ---- 自动回复 ---- */
-        cJSON *item = cJSON_CreateObject();
-        cJSON_AddStringToObject(item, "type", "function_call_output");
-        cJSON_AddStringToObject(item, "call_id", call_id ? call_id : "");
-        cJSON_AddStringToObject(item, "output", output_str);
-        cJSON_AddItemToArray(items, item);
-    }
-
-    printf("\n");
-    printf("========================================\n");
-
-    char *response_str = cJSON_PrintUnformatted(response);
-    if (response_str && sdk_engine) {
-        printf("[AI Settings] Sending function call result: %s\n", response_str);
-        convai_send_message(sdk_engine, response_str, strlen(response_str), NULL);
-        cJSON_free(response_str);
-    }
-    cJSON_Delete(response);
-
-    cJSON_Delete(root);
 }
 
 static void update_paired_status()
@@ -857,6 +591,223 @@ static void wifi_status_callback(int event, void* data) {
     }
 }
 
+/* ---- talk page UI callbacks (run in main_app's TU where controls live) ---- */
+static int talk_ui_is_visible_cb(void) { return FrameView_talk->isVisible(); }
+static void talk_ui_flush_cb(void) { FrameView_talk->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT); }
+
+static void talk_ui_show_cb(void)
+{
+    /* hide config sub-panel if it was open */
+    FrameView_config_wm->setVisible(false);
+
+    /* show the talk page full-screen */
+    FrameView_talk->setVisible(true);
+    FrameView_cloud->setVisible(false);
+
+    Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+    printf("[Talk] talk page shown\n");
+}
+
+static void talk_ui_hide_cb(void)
+{
+    FrameView_talk->setVisible(false);
+    FrameView_cloud->setVisible(true);
+
+    /* refresh avatar in case it was changed via config */
+    LabelView_pic->setImageBuffer(avatar_pic_list[current_avatrid]);
+    LabelView_avashow0->setText(avatar_list[current_avatrid], 24, 2);
+
+    Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+    printf("[Talk] talk page hidden, back to cloud page\n");
+}
+
+/* 更新对话页眼睛/领结动画
+ * 从 AItalk 移植，适配 Settings 的控件命名 (LabelView_talk_*) */
+static void talk_ui_update_cb(int status, int emotion, int avatar_id)
+{
+    /* map SDK status → play type + status label text */
+    convai_status_e st = (convai_status_e)status;
+    int play_type;
+    const char *status_text;
+    if (st == CONVAI_STATUS_IDLE) {
+        play_type = TALK_PLAY_SLEEP;     status_text = "待机中....";
+    } else if (st == CONVAI_STATUS_LISTENING) {
+        play_type = TALK_PLAY_SILENCE;   status_text = "聆听中....";
+    } else if (st == CONVAI_STATUS_THINKING) {
+        play_type = TALK_PLAY_SILENCE;   status_text = "思考中....";
+    } else if (st == CONVAI_STATUS_ANSWERING) {
+        play_type = TALK_PLAY_SPEAK;     status_text = "回答中....";
+    } else if (st == CONVAI_STATUS_INTERRUPTED) {
+        play_type = TALK_PLAY_SILENCE;   status_text = "已打断";
+    } else {
+        play_type = TALK_PLAY_SILENCE;   status_text = "正在思考....";
+    }
+    LabelView_talk_text->setText(status_text);
+
+    static int count = 0;
+    static int dir = 0;
+    int temp_index = 0;
+
+    if (avatar_id) { /* 男性 */
+        LabelView_talk_tie->setImageBuffer((uint16_t*)&rgb16_bowtie_56_53);
+        if (play_type == TALK_PLAY_SLEEP) {
+            temp_index = count % 8;
+            const unsigned char* sleep_imgs[] = {
+                rgb16_closeeye_r1_88_85,
+                rgb16_closeeye_r1_88_85,
+                rgb16_closeeye_r2_88_85,
+                rgb16_closeeye_r3_88_85,
+                rgb16_closeeye_r3_88_85,
+                rgb16_closeeye_r3_88_85,
+                rgb16_closeeye_r2_88_85,
+                rgb16_closeeye_r1_88_85
+            };
+            LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_closeeye_l_88_85);
+            LabelView_talk_eyeR->setImageBuffer((uint16_t*)sleep_imgs[temp_index]);
+            count = (count + 1) % 8;
+        } else if (play_type == TALK_PLAY_SILENCE) {
+            if (++count == 15) count = 0;
+            if (count == 2) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_half_l_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_half_r_88_85);
+            } else if (count == 3) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_closeeye_l_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_closeeye_r_88_85);
+            } else {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_eye_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_eye_88_85);
+            }
+        } else if (play_type == TALK_PLAY_SPEAK) {
+            if (emotion == EMOTION_NEUTRAL) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_eye_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_eye_88_85);
+            } else if (emotion == EMOTION_HAPPY) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_laugh_l_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_laugh_r_88_85);
+                if (dir == 1) {
+                    if (++count >= 5) { count = 5; dir = 0; }
+                } else {
+                    if (--count <= 0) { count = 0; dir = 1; }
+                }
+                LabelView_talk_eyeL->setPosition(72, 66 + count * 2);
+                LabelView_talk_eyeR->setPosition(8, 66 + count * 2);
+            } else if (emotion == EMOTION_ANGRY) {
+                if (++count >= 8) count = 0;
+                if (count > 3) {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_angry_male_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_angry_male_r2_88_85);
+                } else {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_angry_male_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_angry_male_r1_88_85);
+                }
+            } else if (emotion == EMOTION_SAD) {
+                if (++count >= 20) count = 0;
+                if (count == 14 || count == 15 || count == 18 || count == 19) {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_closeeye_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_closeeye_r_88_85);
+                } else {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_sad_male_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_sad_male_r_88_85);
+                }
+            } else if (emotion == EMOTION_DOUBT) {
+                if (++count >= 8) count = 0;
+                if (count > 3) {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_doubt_male_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_doubt_male_r2_88_85);
+                } else {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_doubt_male_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_doubt_male_r1_88_85);
+                }
+            }
+        }
+    } else { /* 女性 */
+        LabelView_talk_tie->setImageBuffer((uint16_t*)&rgb16_bow_56_53);
+        if (play_type == TALK_PLAY_SLEEP) {
+            temp_index = count % 8;
+            const unsigned char* sleep_imgs[] = {
+                rgb16_closeeye_r1_new_88_85,
+                rgb16_closeeye_r1_new_88_85,
+                rgb16_closeeye_r2_new_88_85,
+                rgb16_closeeye_r3_new_88_85,
+                rgb16_closeeye_r3_new_88_85,
+                rgb16_closeeye_r3_new_88_85,
+                rgb16_closeeye_r2_new_88_85,
+                rgb16_closeeye_r1_new_88_85
+            };
+            LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_closeeye_l_new_88_85);
+            LabelView_talk_eyeR->setImageBuffer((uint16_t*)sleep_imgs[temp_index]);
+            count = (count + 1) % 8;
+        } else if (play_type == TALK_PLAY_SILENCE) {
+            if (++count == 15) count = 0;
+            if (count == 2) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_half_l_new_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_half_r_new_88_85);
+            } else if (count == 3) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_closeeye_l_new_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_closeeye_r_new_88_85);
+            } else {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_eye_new_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_eye_new_88_85);
+            }
+        } else if (play_type == TALK_PLAY_SPEAK) {
+            if (emotion == EMOTION_NEUTRAL) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_eye_new_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_eye_new_88_85);
+            } else if (emotion == EMOTION_HAPPY) {
+                LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_laugh_l_new_88_85);
+                LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_laugh_r_new_88_85);
+                if (dir == 1) {
+                    if (++count >= 5) { count = 5; dir = 0; }
+                } else {
+                    if (--count <= 0) { count = 0; dir = 1; }
+                }
+                LabelView_talk_eyeL->setPosition(72, 66 + count * 2);
+                LabelView_talk_eyeR->setPosition(8, 66 + count * 2);
+            } else if (emotion == EMOTION_ANGRY) {
+                if (++count >= 8) count = 0;
+                if (count > 3) {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_angry_female_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_angry_female_r2_88_85);
+                } else {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_angry_female_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_angry_female_r1_88_85);
+                }
+            } else if (emotion == EMOTION_SAD) {
+                if (++count >= 20) count = 0;
+                if (count == 14 || count == 15 || count == 18 || count == 19) {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_closeeye_l_new_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_closeeye_r_new_88_85);
+                } else {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_sad_female_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_sad_female_r_88_85);
+                }
+            } else if (emotion == EMOTION_DOUBT) {
+                if (++count >= 8) count = 0;
+                if (count > 3) {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_doubt_female_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_doubt_female_r2_88_85);
+                } else {
+                    LabelView_talk_eyeL->setImageBuffer((uint16_t*)rgb16_doubt_female_l_88_85);
+                    LabelView_talk_eyeR->setImageBuffer((uint16_t*)rgb16_doubt_female_r1_88_85);
+                }
+            }
+        }
+    }
+}
+
+
+static void talk_ui_register_callbacks(void)
+{
+    static const talk_page_ui_cb_t cb = {
+        talk_ui_is_visible_cb,
+        talk_ui_show_cb,
+        talk_ui_hide_cb,
+        talk_ui_flush_cb,
+        talk_ui_update_cb,
+    };
+    talk_page_set_ui_callbacks(&cb);
+}
+
 // 页面切换函数实现
 static void show_main_page() {
     FrameView_0->setVisible(true);
@@ -864,11 +815,15 @@ static void show_main_page() {
     ListView_cfgwmlist->clearItems();
     ListView_sle->clearItems();
     FrameView_wifi->setVisible(false);
-    FrameView_sle->setVisible(false); /* 隐藏星闪设置页面 */
-    FrameView_volume->setVisible(false); /* 隐藏音量设置页面 */
+    FrameView_sle->setVisible(false);
+    FrameView_volume->setVisible(false);
     FrameView_wifipasswd->setVisible(false);
     FrameView_sle_pair->setVisible(false);
     InputMethodView_0->setVisible(false);
+    FrameView_cloud->setVisible(false);
+    FrameView_config_wm->setVisible(false);
+    FrameView_talk->setVisible(false);
+    talk_page_stop_animation();
     Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
     log_wifi_operation("显示主页面");
 }
@@ -1187,51 +1142,6 @@ static void update_volume_display(void) {
 	LabelView_volume_text->setText(volume_str);
 }
 
-#if 0
-/* 播放音量增加按钮回调 */
-static void on_player_volume_add_click(void*) {
-    printf("[Volume Settings] Player volume add clicked\n");
-    
-    if (audio_service == NULL) {
-        audio_service = (AudioService*)get_service(AUDIO_SERVICE_INDEX);
-        if (audio_service == NULL) {
-            printf("[Volume Settings] Failed to get audio service\n");
-            return;
-        }
-    }
-    
-    float current_volume = audio_service->get_volume(AUDIO_PLAY_STREAM_SYSTEM);
-    current_volume = current_volume + 0.1;
-    if (current_volume > 1.0) {
-        current_volume = 1.0;
-    }
-    
-    audio_service->set_volume(AUDIO_PLAY_STREAM_SYSTEM, current_volume);
-    update_volume_display();
-}
-
-/* 播放音量减少按钮回调 */
-static void on_player_volume_dec_click(void*) {
-    printf("[Volume Settings] Player volume decrease clicked\n");
-    
-    if (audio_service == NULL) {
-        audio_service = (AudioService*)get_service(AUDIO_SERVICE_INDEX);
-        if (audio_service == NULL) {
-            printf("[Volume Settings] Failed to get audio service\n");
-            return;
-        }
-    }
-    
-    float current_volume = audio_service->get_volume(AUDIO_PLAY_STREAM_SYSTEM);
-    current_volume = current_volume - 0.1;
-    if (current_volume < 0.0) {
-        current_volume = 0.0;
-    }
-    
-    audio_service->set_volume(AUDIO_PLAY_STREAM_SYSTEM, current_volume);
-    update_volume_display();
-}
-#endif
 
 
 // 启动输入法函数
@@ -1336,16 +1246,21 @@ static int apply_ai_settings(void)
 
     printf("[AI Settings] Generated config JSON:\n%s\n", json_buf);
 
-    /* Always save latest config — consumed by convai_bridge_start() */
+    /* Always save latest config — consumed by convai_bridge_start() on next connect */
     convai_bridge_set_startup_config(json_buf);
 
-    /* Engine not running: just save config, no update needed */
-    if (!sdk_engine) {
-        printf("[AI Settings] Engine not running, config saved for next start\n");
+    /* Only apply via convai_update when the session is STARTED (connected).
+     * convai_core_update rejects non-STARTED states with INVALID_STATE, so
+     * calling it before connect fails + rolls back UI — making avatar/voice/
+     * personality settings impossible until connected. Use is_started()
+     * (session-level) not !sdk_engine (engine-exists): engine is created at
+     * boot but not started until connect. Config saved above applies next start. */
+    if (!convai_bridge_is_started()) {
+        printf("[AI Settings] Session not started, config saved for next connect\n");
         return 0;
     }
 
-    /* Engine is running — apply immediately */
+    /* Session is streaming — apply immediately via session.update */
     int ret = convai_update(sdk_engine, json_buf);
     if (ret != CONVAI_OK) {
         printf("[AI Settings] ERROR: convai_update failed (ret=%d, %s)\n",
@@ -1434,6 +1349,33 @@ static void init_views(void)
     ButtonView_voice->setOnClick([](void*) {
 	 log_wifi_operation("into voice seeting");
 	 show_voice_setting();
+    });
+
+    /* 音频模式切换按钮 (AUTO / PTT)
+     * Mode is bound to a session: switching is refused while a session is
+     * active. The user must stop the session first, then switch, then restart. */
+    ButtonView_automode->setOnClick([](void*) {
+        printf("[Settings] Switch to AUTO audio mode\n");
+        if (convai_bridge_set_audio_mode(CONVAI_BRIDGE_AUDIO_AUTO) != 0) {
+            printf("[Settings] AUTO switch refused: session active, stop first\n");
+            return;  /* keep current button selection state */
+        }
+        ButtonView_ptttalk->setVisible(false);
+        ButtonView_automode->setColor(0x3F03);  /* 选中 */
+        ButtonView_pttmode->setColor(0x3CE7);   /* 未选中 */
+        Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+    });
+
+    ButtonView_pttmode->setOnClick([](void*) {
+        printf("[Settings] Switch to PTT audio mode\n");
+        if (convai_bridge_set_audio_mode(CONVAI_BRIDGE_AUDIO_PTT) != 0) {
+            printf("[Settings] PTT switch refused: session active, stop first\n");
+            return;  /* keep current button selection state */
+        }
+        ButtonView_ptttalk->setVisible(true);  /* 显示"按住说话"按钮 */
+        ButtonView_automode->setColor(0x3CE7);  /* 未选中 */
+        ButtonView_pttmode->setColor(0x3F03);   /* 选中 */
+        Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
     });
 
     ButtonView_person->setOnClick([](void*) {
@@ -1608,11 +1550,17 @@ static void init_views(void)
 
 
      ButtonView_cloudback->setOnClick([](void*) {
-        /* on cloud page: return to main page, keep engine running */
-        log_wifi_operation("从AI服务页面返回主页面 (引擎保持运行)");
-        show_main_page();
+        /* on talk page: return to cloud config page; else cloud → main */
+        if (talk_page_stop_and_hide()) {
+            log_wifi_operation("从对话页返回AI配置页");
+        } else {
+            /* on cloud page: return to main page, keep engine running */
+            log_wifi_operation("从AI服务页面返回主页面 (引擎保持运行)");
+            show_main_page();
+        }
     });
 
+    /* "进入对话" 按钮：从配置页跳转到对话页 */
     ButtonView_cancle17->setOnClick([](void*) {
 		 log_wifi_operation("从APIKEY页面返回");
 		 show_cloud_page();
@@ -1644,11 +1592,6 @@ static void init_views(void)
         show_main_page();
     });
 
-#if 0
-    /* 音量控制按钮回调 */
-    ButtonView_player_volume_add->setOnClick(on_player_volume_add_click);
-    ButtonView_player_volume_dec->setOnClick(on_player_volume_dec_click);
-#endif
     /* 星闪按钮回调 */
     Button_sle->setOnClick([](void*) {
         printf("[SLE Settings] Entering SLE settings page\n");
@@ -1660,6 +1603,7 @@ static void init_views(void)
         printf("[SLE Settings] Returning to main page from SLE settings\n");
         show_main_page();
     });
+
 
 
 
@@ -1757,9 +1701,30 @@ SpinnerView_sle_mode->setOnItemSelect([](int index, const char* text) {
 
 static void goldie_touch_event(int pressure, int x, int y)
 {
+    /* PTT 按钮触摸拦截 - 在 cloud 页且 PTT 模式下处理 */
+    if (FrameView_cloud->isVisible() &&
+        convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_PTT &&
+        ButtonView_ptttalk->isVisible()) {
+        /* 触摸检测区域比视觉按钮大一些，方便按压 (128, 186), 152x40 */
+        if (x >= 128 && x <= 128 + 152 && y >= 186 && y <= 186 + 40) {
+            if (pressure == 1) {
+                /* 按下 */
+                printf("[PTT] button pressed\n");
+                convai_bridge_ptt_press();
+                ButtonView_ptttalk->setText("松开结束");
+                Window_main->flush(128, 186, 152, 40);
+            } else if (pressure == 0) {
+                /* 释放 */
+                printf("[PTT] button released\n");
+                convai_bridge_ptt_release();
+                ButtonView_ptttalk->setText("按住说话");
+                Window_main->flush(128, 186, 152, 40);
+            }
+            return; /* 已处理，不再传递给 Window_main */
+        }
+    }
     Window_main->handleEvent(pressure, x, y);
 }
-
 
 
 static void goldie_app_run(void)
@@ -1769,10 +1734,9 @@ static void goldie_app_run(void)
     sdk_engine = convai_bridge_get_engine();
     convai_bridge_on_status(cloud_status_callback);
     convai_bridge_on_event(cloud_event_callback);
-    convai_bridge_on_message(cloud_message_callback);
+    func_handlers_register();
     init_cloud_configs();
-    
-    // FIXME: WS63 platform
+
     /* save initial default config so convai_start picks it up */
     {
         char *json_buf = (char *)goldie_malloc(CONVAI_CONFIG_JSON_MAX);
@@ -1788,15 +1752,20 @@ static void goldie_app_run(void)
         }
     }
 
+    /* start the talk page module (animation thread + exit semaphore) */
+    talk_ui_register_callbacks();
+    talk_page_init();
+
 	Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
 }
 
 static void goldie_app_suspend(void)
 {
     /* pause animation thread */
+    talk_page_stop_animation();
     if(sdk_engine)convai_bridge_on_status(NULL);
     if(sdk_engine)convai_bridge_on_event(NULL);
-    if(sdk_engine)convai_bridge_on_message(NULL);
+    func_handlers_unregister();
     window_suspend();
 }
 
@@ -1804,19 +1773,33 @@ static void goldie_app_resume(void)
 {
     if(sdk_engine)convai_bridge_on_status(cloud_status_callback);
     if(sdk_engine)convai_bridge_on_event(cloud_event_callback);
-    if(sdk_engine)convai_bridge_on_message(cloud_message_callback);
+    func_handlers_register();
     window_resume();
+    /* resume animation if talk page is visible */
+    if (talk_page_is_visible()) {
+        talk_page_play_animation();
+    }
 }
 
 static void goldie_app_exit(void)
 {
-   /* stop engine if running */
-   if (sdk_engine && sdk_status != CONVAI_STATUS_IDLE) {
-       convai_bridge_stop();
-   }
+    /* stop the talk page module: stop animation, wait for thread exit via
+     * semaphore, then destroy the thread handle. Must run BEFORE
+     * convai_bridge_stop so the thread's GUI flush doesn't race teardown.
+     * (see convai_talk_page.cpp talk_page_deinit for the sem/destroy rationale) */
+    talk_page_deinit();
+    /* stop engine if the SESSION is active (g_started), NOT sdk_status.
+     * sdk_status is conversation PHASE — IDLE after welcome speech while still
+     * connected. Using sdk_status!=IDLE would skip stop + leak connection/threads. */
+    if (sdk_engine && convai_bridge_is_started()) {
+        convai_bridge_stop();
+    }
+    /* Sync sdk_status from engine directly (async IDLE callback may not arrive
+     * before unregistering) so it doesn't leak across exit/reenter. */
+    sdk_status = sdk_engine ? convai_bridge_get_status() : CONVAI_STATUS_IDLE;
    if(sdk_engine)convai_bridge_on_status(NULL);
    if(sdk_engine)convai_bridge_on_event(NULL);
-   if(sdk_engine)convai_bridge_on_message(NULL);
+   func_handlers_unregister();
    wifi_service->register_callback(NULL);
 #ifdef SUPPORT_SLE
     printf("\r\n\r\n[SLE Settings] === Saving SLE config on app exit ===\r\n\r\n");
@@ -1859,7 +1842,13 @@ static void goldie_keyboard_event(int pressure, int key)
 {
     if((key == SYSTEM_KEY_VALUE_BACK) && (pressure == 1))
     {
-
+        /* page-aware BACK navigation */
+        if (talk_page_is_visible()) {
+            /* talk page → cloud config page */
+            printf("[Settings] BACK: talk → cloud\n");
+            talk_page_stop_and_hide();
+            return;
+        }
         if (FrameView_cloud->isVisible()) {
             /* cloud config page → main page (keep engine running) */
             printf("[Settings] BACK: cloud → main\n");
@@ -1891,8 +1880,9 @@ static void goldie_keyboard_event(int pressure, int key)
 #endif
         /* on main page → exit app */
         printf("[Settings] BACK: main → exit\n");
-        /* stop engine on exit */
-        if (sdk_engine && sdk_status != CONVAI_STATUS_IDLE) {
+        /* stop engine on exit — use is_started (session connected), NOT sdk_status
+         * (conversation phase). IDLE after welcome speech still has session connected. */
+        if (sdk_engine && convai_bridge_is_started()) {
             convai_bridge_stop();
         }
         goldie_exit_app(&my_project);

@@ -10,6 +10,7 @@
 #define CONVAI_AUDIO_INTERNAL_H
 
 #include "convai/convai_api.h"
+#include "convai_bridge.h"  /* convai_bridge_audio_mode_t (PTt mode enum) */
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,6 +40,16 @@ void bridge_uplink_set_audio_source(void *src, int sr, int ch, int bits);
 int  bridge_uplink_send(const uint8_t *data, size_t len,
                         const convai_audio_frame_info_t *info);
 int  bridge_uplink_get_stats(unsigned int *sent, unsigned int *dropped);
+
+/* ---- Uplink PTT (convai_audio_uplink.c) ---- */
+/* Audio mode is owned by the uplink module (it drives the record thread).
+ * Uses convai_bridge_audio_mode_t from convai_bridge.h (the public type). */
+
+int  bridge_uplink_set_audio_mode(convai_bridge_audio_mode_t mode);
+convai_bridge_audio_mode_t bridge_uplink_get_audio_mode(void);
+void bridge_uplink_ptt_press(void);
+void bridge_uplink_ptt_release(void);
+int  bridge_uplink_ptt_is_pressed(void);
 
 /* ---- Downlink module (convai_audio_downlink.c) ---- */
 

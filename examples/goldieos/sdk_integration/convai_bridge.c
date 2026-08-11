@@ -10,6 +10,7 @@
 #include "convai_bridge_defaults.h"
 #include "convai_config_file.h"
 #include "convai_audio_internal.h"
+#include "convai_comfort.h"
 #include "service_manager.h"
 #include "goldie_osal.h"
 
@@ -84,6 +85,9 @@ static void on_status(convai_engine_t e, convai_status_e s, void *ud)
 
     /* Forward to downlink module for playback state machine */
     bridge_downlink_on_status(s);
+
+    /* Forward to comfort module for response-timeout arming */
+    bridge_comfort_on_status(s);
 }
 
 static void on_audio(convai_engine_t e, const void *data, size_t len,
@@ -91,6 +95,9 @@ static void on_audio(convai_engine_t e, const void *data, size_t len,
 {
     (void)e; (void)ud;
     bridge_downlink_on_audio(data, len, info);
+
+    /* TTS audio arrived — cancel any pending comfort timeout */
+    bridge_comfort_on_audio(data, len, info);
 }
 
 static void on_message_data(convai_engine_t e, const void *data, size_t len,
@@ -118,6 +125,7 @@ void convai_bridge_init(void)
 {
     if (g_engine) {
         printf("[convai_bridge] already initialized\n");
+        bridge_comfort_stop();
         return;
     }
 
@@ -226,6 +234,7 @@ static void bridge_setup(void)
 
     bridge_uplink_start();
     bridge_downlink_start();
+    bridge_comfort_start();
 
     g_started = 1;
     g_status  = CONVAI_STATUS_IDLE;
@@ -241,6 +250,7 @@ static void bridge_cleanup(void)
     if (!g_started) return;
 
     bridge_uplink_stop();
+    bridge_comfort_stop();
     bridge_downlink_stop();
 
     g_started = 0;
@@ -275,6 +285,7 @@ int convai_bridge_restart(void)
 convai_engine_t convai_bridge_get_engine(void)     { return g_engine; }
 convai_status_e convai_bridge_get_status(void)     { return g_status; }
 int convai_bridge_is_speaking(void)                { return (g_status == CONVAI_STATUS_ANSWERING); }
+int convai_bridge_is_started(void)                 { return g_started; }
 
 int convai_bridge_get_uplink_stats(unsigned int *frames_sent,
                                    unsigned int *frames_dropped)
@@ -294,6 +305,19 @@ int convai_bridge_send_audio(const uint8_t *data, size_t len,
 {
     return bridge_uplink_send(data, len, info);
 }
+
+/* ---- Audio mode / PTT (forwarded to uplink module) ---- */
+int convai_bridge_set_audio_mode(convai_bridge_audio_mode_t mode)
+{
+    return bridge_uplink_set_audio_mode(mode);
+}
+convai_bridge_audio_mode_t convai_bridge_get_audio_mode(void)
+{
+    return bridge_uplink_get_audio_mode();
+}
+void convai_bridge_ptt_press(void)   { bridge_uplink_ptt_press(); }
+void convai_bridge_ptt_release(void) { bridge_uplink_ptt_release(); }
+int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed(); }
 
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }

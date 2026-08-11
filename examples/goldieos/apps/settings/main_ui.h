@@ -41,6 +41,45 @@
 #include "rgb16_switch1_released_56_24.h"
 #include "rgb16_switch6_released_56_26.h"
 #include "rgb16_switch1_released_56_25.h"
+// 对话页动画精灵
+#include "rgb16_bowtie_56_53.h"
+#include "rgb16_bow_56_53.h"
+#include "rgb16_closeeye_l_88_85.h"
+#include "rgb16_closeeye_r_88_85.h"
+#include "rgb16_closeeye_r1_88_85.h"
+#include "rgb16_closeeye_r2_88_85.h"
+#include "rgb16_closeeye_r3_88_85.h"
+#include "rgb16_eye_88_85.h"
+#include "rgb16_half_l_88_85.h"
+#include "rgb16_half_r_88_85.h"
+#include "rgb16_laugh_l_88_85.h"
+#include "rgb16_laugh_r_88_85.h"
+#include "rgb16_closeeye_l_new_88_85.h"
+#include "rgb16_closeeye_r_new_88_85.h"
+#include "rgb16_closeeye_r1_new_88_85.h"
+#include "rgb16_closeeye_r2_new_88_85.h"
+#include "rgb16_closeeye_r3_new_88_85.h"
+#include "rgb16_eye_new_88_85.h"
+#include "rgb16_half_l_new_88_85.h"
+#include "rgb16_half_r_new_88_85.h"
+#include "rgb16_laugh_l_new_88_85.h"
+#include "rgb16_laugh_r_new_88_85.h"
+#include "rgb16_angry_male_l_88_85.h"
+#include "rgb16_angry_male_r1_88_85.h"
+#include "rgb16_angry_male_r2_88_85.h"
+#include "rgb16_doubt_male_l_88_85.h"
+#include "rgb16_doubt_male_r1_88_85.h"
+#include "rgb16_doubt_male_r2_88_85.h"
+#include "rgb16_sad_male_l_88_85.h"
+#include "rgb16_sad_male_r_88_85.h"
+#include "rgb16_angry_female_l_88_85.h"
+#include "rgb16_angry_female_r1_88_85.h"
+#include "rgb16_angry_female_r2_88_85.h"
+#include "rgb16_doubt_female_l_88_85.h"
+#include "rgb16_doubt_female_r1_88_85.h"
+#include "rgb16_doubt_female_r2_88_85.h"
+#include "rgb16_sad_female_l_88_85.h"
+#include "rgb16_sad_female_r_88_85.h"
 
 // 掩码头文件
 #include "round_rect_56_24_r1_boundary.h"
@@ -79,6 +118,9 @@
 #include "round_rect_80_18_r1_boundary.h"
 #include "round_rect_152_136_r1_boundary.h"
 #include "round_rect_80_24_r3_boundary.h"
+#include "round_rect_56_53_r1_boundary.h"
+#include "round_rect_88_85_r1_boundary.h"
+#include "round_rect_240_16_r1_boundary.h"
 // 全局控件变量定义
 static std::shared_ptr<ImgButtonView> CheckboxView_sle;
 static std::shared_ptr<ButtonView> ButtonView_sle_back;
@@ -135,9 +177,20 @@ static std::shared_ptr<FrameView> FrameView_config_wm;
 static std::shared_ptr<LabelView> LabelView_avashow0;
 static std::shared_ptr<LabelView> LabelView_pic;
 static std::shared_ptr<ButtonView> ButtonView_ava;
+static std::shared_ptr<ButtonView> ButtonView_automode;   /* 自动模式按钮 */
+static std::shared_ptr<ButtonView> ButtonView_pttmode;    /* 按键模式按钮 */
+static std::shared_ptr<ButtonView> ButtonView_ptttalk;    /* PTT 按住说话按钮 */
 static std::shared_ptr<LabelView> LabelView_status_conn;
 static std::shared_ptr<LabelView> LabelView_status_conv;
 static std::shared_ptr<FrameView> FrameView_cloud;
+// 对话页控件
+static std::shared_ptr<FrameView> FrameView_talk;
+static std::shared_ptr<FrameView> FrameView_talk_L;
+static std::shared_ptr<FrameView> FrameView_talk_R;
+static std::shared_ptr<LabelView> LabelView_talk_eyeL;
+static std::shared_ptr<LabelView> LabelView_talk_eyeR;
+static std::shared_ptr<LabelView> LabelView_talk_tie;
+static std::shared_ptr<LabelView> LabelView_talk_text;
 static std::shared_ptr<InputMethodView> InputMethodView_0;
 static std::shared_ptr<Window> Window_main;
 
@@ -227,7 +280,6 @@ static void main_ui_init()
     ButtonView_volume_back->setTextColor(0);
     ButtonView_volume_back->setVisible(true);
     ButtonView_volume_back->setImageBuffer((uint16_t*)&rgb16_back3_48_24);
-
 
 
     LabelView_ptitle_show = std::make_shared<LabelView>(240, 24);
@@ -526,6 +578,29 @@ static void main_ui_init()
     ButtonView_ava->setVisible(true);
     ButtonView_ava->setIcon((uint16_t*)&rgb16_avat_24_24,24,24);
 
+    /* 音频模式切换按钮 (AUTO / PTT) */
+    ButtonView_automode = std::make_shared<ButtonView>(40, 24);
+    ButtonView_automode->setColor(0x3F03);
+    ButtonView_automode->setTextColor(0x0000);
+    ButtonView_automode->setText("auto");
+    ButtonView_automode->setBoundaryBuffer(nullptr);
+    ButtonView_automode->setVisible(true);
+
+    ButtonView_pttmode = std::make_shared<ButtonView>(40, 24);
+    ButtonView_pttmode->setColor(0x3CE7);
+    ButtonView_pttmode->setTextColor(0x0000);
+    ButtonView_pttmode->setText("ptt");
+    ButtonView_pttmode->setBoundaryBuffer(nullptr);
+    ButtonView_pttmode->setVisible(true);
+
+    /* PTT 按住说话按钮（仅在 PTT 模式 + 已连接时可见）*/
+    ButtonView_ptttalk = std::make_shared<ButtonView>(152, 16);
+    ButtonView_ptttalk->setColor(0x3F03);
+    ButtonView_ptttalk->setTextColor(0xFFFF);
+    ButtonView_ptttalk->setText("按住说话");
+    ButtonView_ptttalk->setBoundaryBuffer(nullptr);
+    ButtonView_ptttalk->setVisible(false);
+
     /* status indicator lights (connection + conversation state)
      * placed side-by-side below the avatar, aligned to its right edge */
     LabelView_status_conn = std::make_shared<LabelView>(76, 16);
@@ -539,7 +614,7 @@ static void main_ui_init()
     LabelView_status_conv->setTextColor(0xFFFF);      /* white text */
     LabelView_status_conv->setText("空闲");
     LabelView_status_conv->setVisible(true);
-    
+
     // 云服务设置界面
     FrameView_cloud = std::make_shared<FrameView>(320, 240);
     FrameView_cloud->setColor(0xFFFF);
@@ -551,6 +626,50 @@ static void main_ui_init()
     InputMethodView_0->setColor(0xFFFF);
     InputMethodView_0->setTextColor(0);
     InputMethodView_0->setVisible(false);
+
+    // ---- 对话页控件 (FrameView_talk, 320x240 全屏) ----
+    LabelView_talk_tie = std::make_shared<LabelView>(56, 53);
+    LabelView_talk_tie->setColor(0xFFFF);
+    LabelView_talk_tie->setTextColor(0);
+    LabelView_talk_tie->setBoundaryBuffer(round_rect_56_53_r1_boundary);
+    LabelView_talk_tie->setVisible(true);
+    LabelView_talk_tie->setImageBuffer((uint16_t*)&rgb16_bowtie_56_53);
+
+    LabelView_talk_eyeR = std::make_shared<LabelView>(88, 85);
+    LabelView_talk_eyeR->setColor(0xFFFF);
+    LabelView_talk_eyeR->setTextColor(0);
+    LabelView_talk_eyeR->setBoundaryBuffer(round_rect_88_85_r1_boundary);
+    LabelView_talk_eyeR->setVisible(true);
+    LabelView_talk_eyeR->setImageBuffer((uint16_t*)&rgb16_closeeye_r1_88_85);
+
+    FrameView_talk_R = std::make_shared<FrameView>(160, 240);
+    FrameView_talk_R->setColor(0x0000);
+    FrameView_talk_R->setTextColor(0);
+    FrameView_talk_R->setVisible(true);
+
+    LabelView_talk_eyeL = std::make_shared<LabelView>(88, 85);
+    LabelView_talk_eyeL->setColor(0xFFFF);
+    LabelView_talk_eyeL->setTextColor(0);
+    LabelView_talk_eyeL->setBoundaryBuffer(round_rect_88_85_r1_boundary);
+    LabelView_talk_eyeL->setVisible(true);
+    LabelView_talk_eyeL->setImageBuffer((uint16_t*)&rgb16_closeeye_l_88_85);
+
+    FrameView_talk_L = std::make_shared<FrameView>(160, 240);
+    FrameView_talk_L->setColor(0x0000);
+    FrameView_talk_L->setTextColor(0);
+    FrameView_talk_L->setVisible(true);
+
+    LabelView_talk_text = std::make_shared<LabelView>(240, 16);
+    LabelView_talk_text->setColor(0x0000);
+    LabelView_talk_text->setTextColor(0xFFFF);
+    LabelView_talk_text->setText("准备中....");
+    LabelView_talk_text->setBoundaryBuffer(round_rect_240_16_r1_boundary);
+    LabelView_talk_text->setVisible(true);
+
+    FrameView_talk = std::make_shared<FrameView>(320, 240);
+    FrameView_talk->setColor(0x0000);
+    FrameView_talk->setTextColor(0);
+    FrameView_talk->setVisible(false);
 
     Window_main = std::make_shared<Window>(APP_WINDOW_START_X, APP_WINDOW_START_Y,320, 240);
     Window_main->setColor(0x8631);
@@ -613,8 +732,11 @@ static void main_ui_init()
     FrameView_cloud->addView(ButtonView_relat, 16, 163);
     FrameView_cloud->addView(ButtonView_person, 16, 125);
     FrameView_cloud->addView(CheckboxView_cloudsw, 256, 41);
-    FrameView_cloud->addView(LabelView_status_conn, 128, 216);
-    FrameView_cloud->addView(LabelView_status_conv, 204, 216);
+    FrameView_cloud->addView(LabelView_status_conn, 128, 214);
+    FrameView_cloud->addView(LabelView_status_conv, 204, 214);
+    FrameView_cloud->addView(ButtonView_automode, 110, 41);
+    FrameView_cloud->addView(ButtonView_pttmode, 140, 41);
+    FrameView_cloud->addView(ButtonView_ptttalk, 128, 196);  /* PTT 按住说话按钮 */
     FrameView_cloud->addView(ButtonView_voice, 16, 88);
     FrameView_config_wm->addView(ListView_cfgwmlist, 24, 26);
     FrameView_config_wm->addView(ButtonView_yes17, 32, 87);
@@ -622,6 +744,14 @@ static void main_ui_init()
     FrameView_config_wm->addView(ButtonView_cancle17, 128, 88);
     FrameView_config_wm->addView(TextEditView_apikey, 16, 39);
     Window_main->addView(InputMethodView_0, 16, 0);
+    // 对话页父子关系
+    Window_main->addView(FrameView_talk, 0, 0);
+    FrameView_talk->addView(LabelView_talk_text, 40, 155);
+    FrameView_talk->addView(FrameView_talk_L, 0, 0);
+    FrameView_talk->addView(FrameView_talk_R, 160, 0);
+    FrameView_talk->addView(LabelView_talk_tie, 140, 155);
+    FrameView_talk_R->addView(LabelView_talk_eyeR, 8, 67);
+    FrameView_talk_L->addView(LabelView_talk_eyeL, 72, 66);
     // 刷新窗口
     Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
 }
@@ -644,6 +774,7 @@ static void window_exit(void)
     FrameView_0->removeAllChilds();
     FrameView_config_wm->removeAllChilds();
     FrameView_cloud->removeAllChilds();
+    FrameView_talk->removeAllChilds();
     SpinnerView_sle_mode->destoryViews();
 
     CheckboxView_sle.reset();
@@ -691,6 +822,9 @@ static void window_exit(void)
     LabelView_avashow0.reset();
     LabelView_pic.reset();
     ButtonView_ava.reset();
+    ButtonView_automode.reset();
+    ButtonView_pttmode.reset();
+    ButtonView_ptttalk.reset();
     LabelView_status_conn.reset();
     LabelView_status_conv.reset();
     InputMethodView_0.reset();
@@ -702,6 +836,14 @@ static void window_exit(void)
     FrameView_0.reset();
     FrameView_config_wm.reset();
     FrameView_cloud.reset();
+    // 对话页控件
+    LabelView_talk_tie.reset();
+    LabelView_talk_eyeR.reset();
+    LabelView_talk_eyeL.reset();
+    LabelView_talk_text.reset();
+    FrameView_talk_R.reset();
+    FrameView_talk_L.reset();
+    FrameView_talk.reset();
     Window_main.reset();
 }
 

@@ -125,6 +125,7 @@ typedef enum {
 
 typedef struct {
     convai_audio_data_type_e data_type;
+    int commit;  /* 0=streaming (append), 1=commit buffer (trigger AI) */
 } convai_audio_frame_info_t;
 
 typedef struct {
