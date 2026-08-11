@@ -27,6 +27,24 @@ The expected startup log contains:
 I (...) convai_esp32s3: Hello world from the ESP32-S3 ConvAI example!
 ```
 
-To use the SDK in a later component, add `REQUIRES convai_sdk` to that
-component's `idf_component_register` call and include headers as
+## SDK selection and source archive
+
+The SDK provider is selected automatically at CMake configure time:
+
+1. If `../../src/CMakeLists.txt` exists, it is built for ESP32-S3 and linked
+   into the firmware. The same static target is copied to
+   `build/artifacts/esp32-s3/libconvai_sdk.a` for SDK archiving.
+2. Otherwise, `../../libs/esp32-s3/libconvai_sdk.a` is linked into the
+   firmware. No new SDK archive is exported in this mode.
+3. Configuration fails when neither provider is available.
+
+The source package must be usable through `add_subdirectory()` and define a
+local static-library target named `convai_sdk`. It can select ESP32-S3 through
+`ESP_PLATFORM`, `IDF_TARGET`, or `CONVAI_PLATFORM`. It must also declare the
+`idf::` component targets it directly uses. Paths inside the source package
+should be based on `CMAKE_CURRENT_LIST_DIR`, not `CMAKE_SOURCE_DIR`, because the
+latter points to this example when the SDK is embedded in ESP-IDF.
+
+Components using the SDK should add `REQUIRES convai_sdk` to their
+`idf_component_register` call and include headers as
 `#include "convai/convai_api.h"`.
