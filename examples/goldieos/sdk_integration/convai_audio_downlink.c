@@ -6,6 +6,7 @@
  * Extracted from convai_bridge.c — behavior is bit-for-bit identical.
  */
 #include "convai_audio_internal.h"
+#include "convai_audio_dump.h"
 #include "convai_codec_g711a.h"
 #include "convai_memory_budget.h"
 #include "audio_service.h"
@@ -28,6 +29,8 @@ enum {
  * doesn't underrun on the first burst. ~240ms of 16kHz-mono-16bit PCM. */
 #define PLAYBACK_PREBUFFER   3840
 
+#define AUDIO_DOWNLINK_DUMP_PATH  "audio_downlink_dump.wav"
+
 typedef struct {
     int state;          /* current playback state */
     int running;        /* thread exit flag */
@@ -42,6 +45,18 @@ typedef struct {
 static playback_ctrl_t g_playback_ctrl = {0};
 
 static uint8_t g_pcm_decode_buf[CONVAI_BUDGET_PCM_DECODE_BYTES];
+
+/* Keep the downlink dump on the playback thread: open, write, and close all
+ * happen on one thread, and the WAV contains the PCM actually dequeued for
+ * playback (including the final drain during session shutdown). */
+static void playback_write(AudioService *audio, const void *data,
+                           unsigned int len)
+{
+    bridge_dump_write(BRIDGE_AUDIO_DUMP_DOWNLINK, data, (size_t)len);
+    if (audio && audio->audio_write) {
+        audio->audio_write(data, len);
+    }
+}
 
 /* ===================================================================
  *  Playback thread — DMA feedback-driven consumer.
@@ -68,6 +83,18 @@ static int playback_thread_func(void *arg)
     AudioService *audio = (AudioService *)hw->audio_service;
 
     const int sr = hw->sample_rate > 0 ? hw->sample_rate : 8000;
+
+    /* G.711A downlink decodes to mono PCM16 regardless of the stereo capture
+     * format used by the uplink/AEC path. */
+    int dump_ret = bridge_dump_open(BRIDGE_AUDIO_DUMP_DOWNLINK,
+                                    AUDIO_DOWNLINK_DUMP_PATH, sr, 1, 16);
+    if (dump_ret == 0) {
+        printf("[convai_bridge] downlink audio dump file opened: %s\n",
+               AUDIO_DOWNLINK_DUMP_PATH);
+    } else {
+        printf("[convai_bridge] WARNING: cannot open downlink dump file %s\n",
+               AUDIO_DOWNLINK_DUMP_PATH);
+    }
 
     printf("[convai_bridge] playback thread started (sr=%d, DMA feedback)\n", sr);
 
@@ -130,9 +157,7 @@ static int playback_thread_func(void *arg)
                         int len = ring_buffer_bulk_read_noblock(&ctrl->ring,
                                                                 buf, CONVAI_BUDGET_PLAYBACK_READ_BYTES);
                         if (len <= 0) break;
-                        if (audio && audio->audio_write) {
-                            audio->audio_write(buf, (unsigned int)len);
-                        }
+                        playback_write(audio, buf, (unsigned int)len);
                         dma_level = (audio && audio->get_valid_length)
                             ? audio->get_valid_length(NULL) : dma_level;
                     }
@@ -148,9 +173,7 @@ static int playback_thread_func(void *arg)
                     int len = ring_buffer_bulk_read_noblock(&ctrl->ring,
                                                             buf, CONVAI_BUDGET_PLAYBACK_READ_BYTES);
                     if (len <= 0) break;
-                    if (audio && audio->audio_write) {
-                        audio->audio_write(buf, (unsigned int)len);
-                    }
+                    playback_write(audio, buf, (unsigned int)len);
                     dma_level = (audio && audio->get_valid_length)
                         ? audio->get_valid_length(NULL) : dma_level;
                 }
@@ -205,8 +228,7 @@ static int playback_thread_func(void *arg)
         int d;
         while ((d = ring_buffer_bulk_read_noblock(&ctrl->ring,
                                                    buf, CONVAI_BUDGET_PLAYBACK_READ_BYTES)) > 0) {
-            if (audio && audio->audio_write)
-                audio->audio_write(buf, (unsigned int)d);
+            playback_write(audio, buf, (unsigned int)d);
         }
     }
 
@@ -215,6 +237,7 @@ static int playback_thread_func(void *arg)
         hw_started = 0;
     }
 
+    bridge_dump_close(BRIDGE_AUDIO_DUMP_DOWNLINK);
     printf("[convai_bridge] playback thread stopped\n");
     goldie_sem_post(&ctrl->exit_sem);
 
