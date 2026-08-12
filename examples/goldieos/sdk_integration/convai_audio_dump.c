@@ -2,8 +2,8 @@
  * @file convai_audio_dump.c
  * @brief WAV file dump implementation (desktop only, no-op on embedded).
  *
- * Writes PCM audio data to a WAV file with proper RIFF headers.
- * Used for debugging audio capture on desktop platforms.
+ * Writes PCM audio data to independent WAV files with proper RIFF headers.
+ * Used for debugging audio capture and playback on desktop platforms.
  */
 #include "convai_audio_dump.h"
 
@@ -12,8 +12,21 @@
 
 #ifndef __EMBEDDED__
 
-static FILE *g_dump_file       = NULL;
-static long   g_dump_data_bytes = 0;
+typedef struct {
+    FILE *file;
+    long  data_bytes;
+} audio_dump_state_t;
+
+static audio_dump_state_t g_dump_states[BRIDGE_AUDIO_DUMP_COUNT];
+
+static audio_dump_state_t *dump_get_state(bridge_audio_dump_stream_t stream)
+{
+    if (stream < BRIDGE_AUDIO_DUMP_UPLINK ||
+        stream >= BRIDGE_AUDIO_DUMP_COUNT) {
+        return NULL;
+    }
+    return &g_dump_states[stream];
+}
 
 /**
  * Write a placeholder WAV header; sizes will be patched on close.
@@ -72,55 +85,68 @@ static void dump_wav_finalize(FILE *f, long total_data_bytes)
     fclose(f);
 }
 
-int bridge_dump_open(const char *path, int sample_rate, int channels, int bits)
+int bridge_dump_open(bridge_audio_dump_stream_t stream, const char *path,
+                     int sample_rate, int channels, int bits)
 {
-    if (g_dump_file) {
-        dump_wav_finalize(g_dump_file, g_dump_data_bytes);
-        g_dump_file = NULL;
+    audio_dump_state_t *state = dump_get_state(stream);
+    if (state == NULL) return -1;
+
+    if (state->file) {
+        dump_wav_finalize(state->file, state->data_bytes);
+        state->file = NULL;
     }
 
-    g_dump_file = fopen(path, "wb");
-    if (!g_dump_file) return -1;
+    state->file = fopen(path, "wb");
+    if (!state->file) return -1;
 
-    dump_wav_header(g_dump_file, sample_rate, channels, bits);
-    g_dump_data_bytes = 0;
+    dump_wav_header(state->file, sample_rate, channels, bits);
+    state->data_bytes = 0;
     return 0;
 }
 
-int bridge_dump_write(const void *data, size_t len)
+int bridge_dump_write(bridge_audio_dump_stream_t stream,
+                      const void *data, size_t len)
 {
-    if (!g_dump_file) return 0;
-    size_t written = fwrite(data, 1, len, g_dump_file);
-    g_dump_data_bytes += (long)written;
+    audio_dump_state_t *state = dump_get_state(stream);
+    if (state == NULL) return -1;
+    if (!state->file) return 0;
+
+    size_t written = fwrite(data, 1, len, state->file);
+    state->data_bytes += (long)written;
     return (written == len) ? 0 : -1;
 }
 
-int bridge_dump_close(void)
+int bridge_dump_close(bridge_audio_dump_stream_t stream)
 {
-    if (!g_dump_file) return 0;
+    audio_dump_state_t *state = dump_get_state(stream);
+    if (state == NULL) return -1;
+    if (!state->file) return 0;
 
-    dump_wav_finalize(g_dump_file, g_dump_data_bytes);
-    g_dump_file = NULL;
-    g_dump_data_bytes = 0;
+    dump_wav_finalize(state->file, state->data_bytes);
+    state->file = NULL;
+    state->data_bytes = 0;
     return 0;
 }
 
 #else /* __EMBEDDED__ */
 
-int bridge_dump_open(const char *path, int sample_rate, int channels, int bits)
+int bridge_dump_open(bridge_audio_dump_stream_t stream, const char *path,
+                     int sample_rate, int channels, int bits)
 {
-    (void)path; (void)sample_rate; (void)channels; (void)bits;
+    (void)stream; (void)path; (void)sample_rate; (void)channels; (void)bits;
     return -1;  /* not supported on embedded — no filesystem */
 }
 
-int bridge_dump_write(const void *data, size_t len)
+int bridge_dump_write(bridge_audio_dump_stream_t stream,
+                      const void *data, size_t len)
 {
-    (void)data; (void)len;
+    (void)stream; (void)data; (void)len;
     return 0;
 }
 
-int bridge_dump_close(void)
+int bridge_dump_close(bridge_audio_dump_stream_t stream)
 {
+    (void)stream;
     return 0;
 }
 

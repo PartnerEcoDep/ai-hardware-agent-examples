@@ -11,6 +11,7 @@
 #include "convai_config_file.h"
 #include "convai_audio_internal.h"
 #include "convai_comfort.h"
+#include "convai_memory_budget.h"
 #include "service_manager.h"
 #include "goldie_osal.h"
 
@@ -26,14 +27,12 @@ static convai_bridge_event_cb   g_event_cb   = NULL;
 static convai_bridge_message_cb g_message_cb = NULL;
 
 /* ---- startup config (set by settings UI, consumed by start) ---- */
-#define STARTUP_CONFIG_MAX  2048
-static char g_startup_config[STARTUP_CONFIG_MAX] = {0};
+static char g_startup_config[CONVAI_BUDGET_STARTUP_CONFIG_BYTES] = {0};
 
 /* Device name injected by app layer (e.g. WiFi MAC). NULL → use default. */
-#define DEVICE_NAME_MAX  64
-static char g_device_name[DEVICE_NAME_MAX] = {0};
+static char g_device_name[CONVAI_BUDGET_DEVICE_NAME_BYTES] = {0};
 
-static char g_json_copy_buf[2048]; /* 用于 on_message_data 回调 */
+static char g_json_copy_buf[CONVAI_BUDGET_JSON_COPY_BYTES]; /* 用于 on_message_data 回调 */
 
 /* ---- Internal accessors (consumed by audio modules) ---- */
 convai_engine_t bridge_get_engine(void) { return g_engine; }
@@ -139,7 +138,7 @@ void convai_bridge_init(void)
 
     /* Platform init must be done by the app layer before calling this — bridge
      * is platform-agnostic and does not call any platform-specific init. */
-    char config_json[2048];
+    char config_json[CONVAI_BUDGET_STARTUP_CONFIG_BYTES];
     const char *dev_name = g_device_name[0] ? g_device_name : NULL;
     const char *cfg = bridge_build_config_json(config_json, sizeof(config_json), dev_name);
 

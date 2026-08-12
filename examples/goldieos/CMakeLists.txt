@@ -152,6 +152,16 @@ endif()
 # ====================================================================
 if(CONVAI_PLATFORM STREQUAL "ws63")
 
+    # ---- New WS63 mbedTLS headers ----
+    # Must be searched before the legacy include/third_party/mbedtls headers.
+    set(WS63_MBEDTLS_INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-ws63/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-ws63/configs
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-ws63/harden/src/internal_include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-ws63/harden/cipher_adapt_include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-ws63/harden/platform/connect
+    )
+
     # -- Platform-specific include dirs --
     set(WS63_INCLUDE_DIRS
         # Platform headers (WS63 hardware)
@@ -220,6 +230,11 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
         CONFIG_ROM_COMPILE
         INLINE_TO_FORCEINLINE
         LWIP_CONFIG_FILE="lwipopts_default.h"
+
+        # mbedTLS library and consumers must use the same configuration.
+        MBEDTLS_CONFIG_FILE="goldieos_config.h"
+        MBEDTLS_USER_CONFIG_FILE="mbedtls_platform_hardware_config.h"
+        TD_SUPPORT_STDLIB
     )
 
     # -- Link options --
@@ -261,6 +276,11 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
         ${WS63_SPEEX_SRC}
     )
 
+    # New mbedTLS headers must override the legacy mbedTLS headers.
+    target_include_directories(goldieos_ws63 BEFORE PRIVATE
+        ${WS63_MBEDTLS_INCLUDE_DIRS}
+    )
+
     target_include_directories(goldieos_ws63 PRIVATE
         ${COMMON_INCLUDE_DIRS}
         ${WS63_INCLUDE_DIRS}
@@ -287,6 +307,161 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
             "Set WS63_BOARD_ROOT cmake variable or GOLDIEOS_ROOT environment variable.")
     endif()
 
+    # ====================================================================
+    #  WS63 mbedTLS 3.1.0 + harden
+    # ====================================================================
+
+    set(MBEDTLS_WS63_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mbedtls-ws63"
+    )
+
+    if(NOT EXISTS "${MBEDTLS_WS63_DIR}/library/ssl_tls.c")
+        message(FATAL_ERROR
+            "WS63 mbedTLS source not found: ${MBEDTLS_WS63_DIR}")
+    endif()
+
+    set(MBEDTLS_WS63_SRC
+        # ---- mbedTLS core / crypto / X.509 / TLS ----
+        ${MBEDTLS_WS63_DIR}/library/aes.c
+        ${MBEDTLS_WS63_DIR}/library/aesni.c
+        ${MBEDTLS_WS63_DIR}/library/aria.c
+        ${MBEDTLS_WS63_DIR}/library/asn1parse.c
+        ${MBEDTLS_WS63_DIR}/library/asn1write.c
+        ${MBEDTLS_WS63_DIR}/library/base64.c
+        ${MBEDTLS_WS63_DIR}/library/bignum.c
+        ${MBEDTLS_WS63_DIR}/library/camellia.c
+        ${MBEDTLS_WS63_DIR}/library/ccm.c
+        ${MBEDTLS_WS63_DIR}/library/chacha20.c
+        ${MBEDTLS_WS63_DIR}/library/chachapoly.c
+        ${MBEDTLS_WS63_DIR}/library/cipher.c
+        ${MBEDTLS_WS63_DIR}/library/cipher_wrap.c
+        ${MBEDTLS_WS63_DIR}/library/cmac.c
+        ${MBEDTLS_WS63_DIR}/library/constant_time.c
+        ${MBEDTLS_WS63_DIR}/library/ctr_drbg.c
+        ${MBEDTLS_WS63_DIR}/library/debug.c
+        ${MBEDTLS_WS63_DIR}/library/des.c
+        ${MBEDTLS_WS63_DIR}/library/dhm.c
+        ${MBEDTLS_WS63_DIR}/library/ecdh.c
+        ${MBEDTLS_WS63_DIR}/library/ecdsa.c
+        ${MBEDTLS_WS63_DIR}/library/ecjpake.c
+        ${MBEDTLS_WS63_DIR}/library/ecp.c
+        ${MBEDTLS_WS63_DIR}/library/ecp_curves.c
+        ${MBEDTLS_WS63_DIR}/library/entropy.c
+        ${MBEDTLS_WS63_DIR}/library/error.c
+        ${MBEDTLS_WS63_DIR}/library/gcm.c
+        ${MBEDTLS_WS63_DIR}/library/hmac_drbg.c
+        ${MBEDTLS_WS63_DIR}/library/hkdf.c
+        ${MBEDTLS_WS63_DIR}/library/md.c
+        ${MBEDTLS_WS63_DIR}/library/md5.c
+        ${MBEDTLS_WS63_DIR}/library/memory_buffer_alloc.c
+        ${MBEDTLS_WS63_DIR}/library/mps_reader.c
+        ${MBEDTLS_WS63_DIR}/library/mps_trace.c
+        ${MBEDTLS_WS63_DIR}/library/net_sockets.c
+        ${MBEDTLS_WS63_DIR}/library/nist_kw.c
+        ${MBEDTLS_WS63_DIR}/library/oid.c
+        ${MBEDTLS_WS63_DIR}/library/padlock.c
+        ${MBEDTLS_WS63_DIR}/library/pem.c
+        ${MBEDTLS_WS63_DIR}/library/pk.c
+        ${MBEDTLS_WS63_DIR}/library/pk_wrap.c
+        ${MBEDTLS_WS63_DIR}/library/pkcs5.c
+        ${MBEDTLS_WS63_DIR}/library/pkcs12.c
+        ${MBEDTLS_WS63_DIR}/library/pkparse.c
+        ${MBEDTLS_WS63_DIR}/library/pkwrite.c
+        ${MBEDTLS_WS63_DIR}/library/platform.c
+        ${MBEDTLS_WS63_DIR}/library/platform_util.c
+        ${MBEDTLS_WS63_DIR}/library/poly1305.c
+        ${MBEDTLS_WS63_DIR}/library/ripemd160.c
+        ${MBEDTLS_WS63_DIR}/library/rsa.c
+        ${MBEDTLS_WS63_DIR}/library/rsa_alt_helpers.c
+        ${MBEDTLS_WS63_DIR}/library/sha1.c
+        ${MBEDTLS_WS63_DIR}/library/sha256.c
+        ${MBEDTLS_WS63_DIR}/library/sha512.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_cache.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_ciphersuites.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_cli.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_cookie.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_debug_helpers_generated.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_msg.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_srv.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_ticket.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_tls.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_tls13_client.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_tls13_generic.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_tls13_server.c
+        ${MBEDTLS_WS63_DIR}/library/ssl_tls13_keys.c
+        ${MBEDTLS_WS63_DIR}/library/threading.c
+        ${MBEDTLS_WS63_DIR}/library/version.c
+        ${MBEDTLS_WS63_DIR}/library/version_features.c
+        ${MBEDTLS_WS63_DIR}/library/x509.c
+        ${MBEDTLS_WS63_DIR}/library/x509_create.c
+        ${MBEDTLS_WS63_DIR}/library/x509_crl.c
+        ${MBEDTLS_WS63_DIR}/library/x509_crt.c
+        ${MBEDTLS_WS63_DIR}/library/x509_csr.c
+        ${MBEDTLS_WS63_DIR}/library/x509write_crt.c
+        ${MBEDTLS_WS63_DIR}/library/x509write_csr.c
+
+        # ---- HiSilicon harden / ALT adaptation ----
+        ${MBEDTLS_WS63_DIR}/harden/src/cipher_adapt.c
+        ${MBEDTLS_WS63_DIR}/harden/src/cipher_common.c
+        ${MBEDTLS_WS63_DIR}/harden/src/cmac_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/ecc_harden_common.c
+        ${MBEDTLS_WS63_DIR}/harden/src/ecc_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/hkdf_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/pbkdf2_hmac_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/bignum_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/entropy_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/dfx.c
+        ${MBEDTLS_WS63_DIR}/harden/src/gcm_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/ccm_harden.c
+        ${MBEDTLS_WS63_DIR}/harden/src/hash_harden_common.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/hash_harden_adapt.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/sha1.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/sha256.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/sha512.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/aes.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/aes_harden_adapt.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/rsa.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/rsa_harden_adapt.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/ecp.c
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src/ecp_harden_adapt.c
+    )
+
+    add_library(mbedtls_ws63 STATIC ${MBEDTLS_WS63_SRC})
+
+    target_include_directories(mbedtls_ws63 PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/sdk_integration
+        ${MBEDTLS_WS63_DIR}/compat_inc
+        ${MBEDTLS_WS63_DIR}/include
+        ${MBEDTLS_WS63_DIR}/include/mbedtls
+        ${MBEDTLS_WS63_DIR}/configs
+        ${MBEDTLS_WS63_DIR}/library
+        ${MBEDTLS_WS63_DIR}/3rdparty/everest/include/everest
+        ${MBEDTLS_WS63_DIR}/harden/src/internal_include
+        ${MBEDTLS_WS63_DIR}/harden/platform/connect
+        ${MBEDTLS_WS63_DIR}/harden/cipher_adapt_include
+        ${MBEDTLS_WS63_DIR}/harden/src/connect_src
+        ${MBEDTLS_WS63_DIR}/harden/securec_include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/third_party/lwip
+        ${CMAKE_SOURCE_DIR}/include
+    )
+
+    target_compile_definitions(mbedtls_ws63 PRIVATE
+        MBEDTLS_CONFIG_FILE="goldieos_config.h"
+        MBEDTLS_USER_CONFIG_FILE="mbedtls_platform_hardware_config.h"
+        TD_SUPPORT_STDLIB
+        SYSCALLS_H
+        WS_IOT_LWIP_C
+    )
+
+    set(BOARD_MBEDTLS
+        "${WS63_LINK_ROOT}/libs/ws63/board/libmbedtls.a"
+    )
+
+    if(NOT EXISTS "${BOARD_MBEDTLS}")
+        message(FATAL_ERROR
+            "Board mbedTLS archive not found: ${BOARD_MBEDTLS}")
+    endif()
+
     # -- Linker step (ws63_link_v4.exe) --
     set(WS63_LINKER    "${WS63_LINK_ROOT}/tools/build/tools/ws63_link_v4.exe")
     set(OUTPUT_DIR     "${CMAKE_CURRENT_BINARY_DIR}/out")
@@ -300,10 +475,27 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
 
     add_custom_command(
         OUTPUT ${OUTPUT_BIN} ${OUTPUT_ELF}
+
         COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_DIR}
-        COMMAND ${WS63_LINKER} ${WS63_LINK_ROOT} "${WS63_LIB_GOLDIEOS},${WS63_LIB_OPUS},${WS63_LIB_SDK}" ${OUTPUT_DIR}
-        DEPENDS goldieos_ws63 opus convai_sdk
-        COMMENT "Generating firmware with ws63_link_v4"
+
+        # Replace the original board archive with the rebuilt mbedTLS archive
+        # immediately before ws63_link_v4 runs.
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:mbedtls_ws63>
+            ${BOARD_MBEDTLS}
+
+        COMMAND ${WS63_LINKER}
+            ${WS63_LINK_ROOT}
+            "${WS63_LIB_GOLDIEOS},${WS63_LIB_OPUS},${WS63_LIB_SDK}"
+            ${OUTPUT_DIR}
+
+        DEPENDS
+            goldieos_ws63
+            opus
+            convai_sdk
+            mbedtls_ws63
+
+        COMMENT "Generating firmware with rebuilt WS63 mbedTLS"
         VERBATIM
     )
 
@@ -315,11 +507,11 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
     add_custom_command(TARGET ws63_firmware POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${OUTPUT_DIR}/goldieos.fwpkg
-            ${OUTPUT_DIR}/goldieos-${PROJECT_VERSION}.fwpkg
+            ${OUTPUT_DIR}/goldieos-${CONVAI_PROJECT_VERSION}.fwpkg
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${OUTPUT_DIR}/goldieos.bin
-            ${OUTPUT_DIR}/goldieos-${PROJECT_VERSION}.bin
-        COMMENT "Versioned firmware copy: goldieos-${PROJECT_VERSION}.fwpkg / .bin"
+            ${OUTPUT_DIR}/goldieos-${CONVAI_PROJECT_VERSION}.bin
+        COMMENT "Versioned firmware copy: goldieos-${CONVAI_PROJECT_VERSION}.fwpkg / .bin"
     )
 
     message(STATUS "GoldieOS WS63 configured. Compiler: ${CMAKE_C_COMPILER}")
@@ -444,8 +636,8 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     add_custom_command(TARGET goldieos POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:goldieos>
-            $<TARGET_FILE_DIR:goldieos>/goldieos-${PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>
-        COMMENT "Versioned artifact copy: goldieos-${PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>"
+            $<TARGET_FILE_DIR:goldieos>/goldieos-${CONVAI_PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>
+        COMMENT "Versioned artifact copy: goldieos-${CONVAI_PROJECT_VERSION}$<TARGET_FILE_SUFFIX:goldieos>"
     )
 
     message(STATUS "GoldieOS WIN simulator configured. Compiler: ${CMAKE_C_COMPILER}")
