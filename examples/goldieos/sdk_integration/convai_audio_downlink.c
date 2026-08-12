@@ -7,6 +7,7 @@
  */
 #include "convai_audio_internal.h"
 #include "convai_codec_g711a.h"
+#include "convai_memory_budget.h"
 #include "audio_service.h"
 #include "goldie_osal.h"
 #include "ringbuffer.h"
@@ -20,8 +21,6 @@ enum {
     PLAYBACK_PLAYING,   /* DMA feedback-driven consumption */
 };
 
-#define PLAYBACK_RING_SIZE  16000   /* 1s @ 8kHz mono 16bit — deeper jitter buffer */
-#define PLAYBACK_READ_CHUNK  1024    /* max bytes per ring-buffer read */
 #define DMA_TARGET           0x1800  /* 6144 bytes = 384ms target DMA fill level */
 #define DMA_LOW              0x1000  /* 4096 bytes = 256ms, feed aggressively below this */
 #define DMA_DRAINED          320     /* 20ms, considered drained for stop decision */
@@ -36,13 +35,13 @@ typedef struct {
     void *thread_handle; /* goldie thread handle */
     goldie_sem exit_sem; /* semaphore for graceful exit */
     RingBuffer ring;    /* playback ring buffer */
-    uint8_t ring_data[PLAYBACK_RING_SIZE];
+    uint8_t ring_data[CONVAI_BUDGET_PLAYBACK_RING_BYTES];
     unsigned int dropped_bytes; /* PCM dropped because ring was full (overrun) */
 } playback_ctrl_t;
 
 static playback_ctrl_t g_playback_ctrl = {0};
 
-static uint8_t g_pcm_decode_buf[2048]; /* G.711A decode→16-bit PCM; 2KB holds up to 1KB G.711A (1s @8kHz) */
+static uint8_t g_pcm_decode_buf[CONVAI_BUDGET_PCM_DECODE_BYTES];
 
 /* ===================================================================
  *  Playback thread — DMA feedback-driven consumer.
@@ -76,7 +75,7 @@ static int playback_thread_func(void *arg)
      * g_playback_ctrl, joined in bridge_downlink_stop before any restart),
      * so a file-scope buffer avoids a per-start malloc/free and the heap
      * fragmentation it causes on the memory-constrained WS63. */
-    static uint8_t buf[PLAYBACK_READ_CHUNK];
+    static uint8_t buf[CONVAI_BUDGET_PLAYBACK_READ_BYTES];
 
     int prev_state = PLAYBACK_IDLE;
     int hw_started = 0;
@@ -129,7 +128,7 @@ static int playback_thread_func(void *arg)
                     /* Prime: drain ring into DMA until DMA is at target or ring empty. */
                     while (hw_started && dma_level < DMA_TARGET) {
                         int len = ring_buffer_bulk_read_noblock(&ctrl->ring,
-                                                                buf, PLAYBACK_READ_CHUNK);
+                                                                buf, CONVAI_BUDGET_PLAYBACK_READ_BYTES);
                         if (len <= 0) break;
                         if (audio && audio->audio_write) {
                             audio->audio_write(buf, (unsigned int)len);
@@ -147,7 +146,7 @@ static int playback_thread_func(void *arg)
                  * in a loop keeps the ring low under burst load. */
                 while (dma_level < DMA_TARGET) {
                     int len = ring_buffer_bulk_read_noblock(&ctrl->ring,
-                                                            buf, PLAYBACK_READ_CHUNK);
+                                                            buf, CONVAI_BUDGET_PLAYBACK_READ_BYTES);
                     if (len <= 0) break;
                     if (audio && audio->audio_write) {
                         audio->audio_write(buf, (unsigned int)len);
@@ -205,7 +204,7 @@ static int playback_thread_func(void *arg)
     {
         int d;
         while ((d = ring_buffer_bulk_read_noblock(&ctrl->ring,
-                                                   buf, PLAYBACK_READ_CHUNK)) > 0) {
+                                                   buf, CONVAI_BUDGET_PLAYBACK_READ_BYTES)) > 0) {
             if (audio && audio->audio_write)
                 audio->audio_write(buf, (unsigned int)d);
         }
@@ -231,7 +230,7 @@ void bridge_downlink_start(void)
     /* Init the ring buffer (mutex is initialised by ring_buffer_init) */
     ring_buffer_init(&ctrl->ring);
     ctrl->ring.buffer     = ctrl->ring_data;
-    ctrl->ring.buffer_len = PLAYBACK_RING_SIZE;
+    ctrl->ring.buffer_len = CONVAI_BUDGET_PLAYBACK_RING_BYTES;
 
     /* Init exit semaphore */
     goldie_sem_init(&ctrl->exit_sem);
@@ -245,7 +244,8 @@ void bridge_downlink_start(void)
 
     goldie_thread_lock();
     ctrl->thread_handle = goldie_thread_create(
-        playback_thread_func, NULL, "convai_playback", 0x2000);
+        playback_thread_func, NULL, "convai_playback",
+        CONVAI_BUDGET_AUDIO_DOWNLINK_STACK_BYTES);
     if (ctrl->thread_handle) {
         goldie_thread_set_priority(ctrl->thread_handle, 21);
         printf("[convai_bridge] playback thread created\n");

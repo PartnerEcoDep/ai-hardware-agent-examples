@@ -7,6 +7,7 @@
  */
 #include "convai_func_dispatch.h"
 #include "convai_bridge.h"
+#include "convai_memory_budget.h"
 #include "convai/convai_api.h"
 #include "cJSON.h"
 
@@ -15,14 +16,12 @@
 
 /* Max handlers an app may register.  Small fixed table — function calls are
  * a bounded set defined by the backend's tool list. */
-#define FUNC_DISPATCH_MAX  16
-
 typedef struct {
     const char            *name;
     convai_func_handler_t  handler;
 } func_dispatch_entry_t;
 
-static func_dispatch_entry_t s_registry[FUNC_DISPATCH_MAX];
+static func_dispatch_entry_t s_registry[CONVAI_BUDGET_FUNC_DISPATCH_COUNT];
 static int s_count = 0;
 
 /* Default success reply when a handler leaves *output_str unchanged. */
@@ -82,7 +81,7 @@ static void func_dispatch_message_cb(const char *json_str)
         printf("name=%s\n",     name      ? name      : "(null)");
         printf("arguments=%s\n", arguments ? arguments : "(null)");
 
-        char output_buf[256];
+        char output_buf[CONVAI_BUDGET_FUNC_OUTPUT_BYTES];
         const char *output_str = kDefaultSuccess;
 
         cJSON *args_json = arguments ? cJSON_Parse(arguments) : NULL;
@@ -145,9 +144,9 @@ int func_dispatch_register(const char *name, convai_func_handler_t handler)
             return 0;
         }
     }
-    if (s_count >= FUNC_DISPATCH_MAX) {
+    if (s_count >= CONVAI_BUDGET_FUNC_DISPATCH_COUNT) {
         printf("[FuncDispatch] registry full (%d), cannot register %s\n",
-               FUNC_DISPATCH_MAX, name);
+               CONVAI_BUDGET_FUNC_DISPATCH_COUNT, name);
         return -1;
     }
     s_registry[s_count].name    = name;

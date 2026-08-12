@@ -13,6 +13,7 @@
  */
 
 #include "convai_config_file.h"
+#include "convai_memory_budget.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,10 +57,10 @@ void convai_config_file_deinit(void)
 /* ---- internal constants ---- */
 
 #define CONVAI_CONFIG_FILENAME      "convai.cfg"
-#define CONVAI_CONFIG_MAX_LINE      512
-#define CONVAI_CONFIG_MAX_ENTRIES   32
-#define CONVAI_CONFIG_KEY_MAX       64
-#define CONVAI_CONFIG_VALUE_MAX     256
+#define CONVAI_CONFIG_MAX_LINE      CONVAI_BUDGET_CONFIG_LINE_BYTES
+#define CONVAI_CONFIG_MAX_ENTRIES   CONVAI_BUDGET_CONFIG_ENTRY_COUNT
+#define CONVAI_CONFIG_KEY_MAX       CONVAI_BUDGET_CONFIG_KEY_BYTES
+#define CONVAI_CONFIG_VALUE_MAX     CONVAI_BUDGET_CONFIG_VALUE_BYTES
 
 /* ---- internal structures ---- */
 

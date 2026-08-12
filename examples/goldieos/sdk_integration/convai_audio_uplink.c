@@ -9,6 +9,7 @@
 #include "convai_audio_dump.h"
 #include "convai_audio_diag.h"
 #include "convai_codec_g711a.h"
+#include "convai_memory_budget.h"
 #include "audio_service.h"
 #include "goldie_osal.h"
 
@@ -34,7 +35,6 @@ typedef struct {
 static audio_source_t g_audio_src = {0};
 
 #define AUDIO_DUMP_PATH     "audio_dump.wav"
-#define AUDIO_RECORD_BUF_SIZE  640   /* 40ms @ 8kHz mono 16bit = 640 bytes (double-buffered) */
 
 /* ---- Shared audio HW accessor (downlink module reads this) ---- */
 const audio_hw_info_t *bridge_get_audio_hw(void)
@@ -52,11 +52,11 @@ const audio_hw_info_t *bridge_get_audio_hw(void)
  * (mode is bound to the session, see bridge_uplink_set_audio_mode). */
 static int capture_one_frame(audio_source_t *s, AudioService *audio)
 {
-    static uint8_t buf[AUDIO_RECORD_BUF_SIZE];
-    static uint8_t planar_buf[AUDIO_RECORD_BUF_SIZE];
-    static uint8_t g711_buf[AUDIO_RECORD_BUF_SIZE];
+    static uint8_t buf[CONVAI_BUDGET_AUDIO_RECORD_BYTES];
+    static uint8_t planar_buf[CONVAI_BUDGET_AUDIO_RECORD_BYTES];
+    static uint8_t g711_buf[CONVAI_BUDGET_AUDIO_RECORD_BYTES];
 
-    int len = audio->audio_read(buf, AUDIO_RECORD_BUF_SIZE);
+    int len = audio->audio_read(buf, CONVAI_BUDGET_AUDIO_RECORD_BYTES);
     if (len <= 0) {
         audio_diag_update(audio, NULL, 0, 0);  /* log the no-data frame */
         goldie_msleep(10);  /* no data: yield */
@@ -85,7 +85,7 @@ static int capture_one_frame(audio_source_t *s, AudioService *audio)
     audio_diag_update(audio, planar_samples, (size_t)frame_count, 1);
     size_t g711_len = 0;
     int enc_ret = convai_g711a_encode(planar_buf, (size_t)len, 2,
-                                      g711_buf, AUDIO_RECORD_BUF_SIZE,
+                                      g711_buf, CONVAI_BUDGET_AUDIO_RECORD_BYTES,
                                       &g711_len);
     if (enc_ret != 0 || g711_len == 0) {
         printf("[convai_bridge] WARNING: g711 encode failed\n");
@@ -230,7 +230,8 @@ static int start_record_thread(int (*fn)(void *), const char *tag)
     g_audio_src.running = 1;
 
     g_audio_src.thread_handle = goldie_thread_create(
-        (goldie_thread_handler)fn, NULL, "convai_audio", 0x2000);
+        (goldie_thread_handler)fn, NULL, "convai_audio",
+        CONVAI_BUDGET_AUDIO_UPLINK_STACK_BYTES);
     if (g_audio_src.thread_handle) {
         goldie_thread_set_priority(g_audio_src.thread_handle, 22);
         printf("[convai_bridge] %s: record thread started\n", tag);
