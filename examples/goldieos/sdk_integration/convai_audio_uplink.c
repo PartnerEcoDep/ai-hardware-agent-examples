@@ -34,7 +34,7 @@ typedef struct {
 
 static audio_source_t g_audio_src = {0};
 
-#define AUDIO_DUMP_PATH     "audio_dump.wav"
+#define AUDIO_UPLINK_DUMP_PATH     "audio_uplink_dump.wav"
 
 /* ---- Shared audio HW accessor (downlink module reads this) ---- */
 const audio_hw_info_t *bridge_get_audio_hw(void)
@@ -62,7 +62,7 @@ static int capture_one_frame(audio_source_t *s, AudioService *audio)
         goldie_msleep(10);  /* no data: yield */
         return 0;
     }
-    bridge_dump_write(buf, (size_t)len);
+    bridge_dump_write(BRIDGE_AUDIO_DUMP_UPLINK, buf, (size_t)len);
     /* Deinterleave to planar [L(n).. R(n)..].
      *   L : mic signal (sent to cloud).
      *   R : WS63 = speaker playback (AEC echo-reference, captured by the mic
@@ -212,14 +212,14 @@ void bridge_uplink_set_audio_source(void *src, int sr, int ch, int bits)
 static int start_record_thread(int (*fn)(void *), const char *tag)
 {
     /* Open debug dump file (desktop only, no-op on embedded) */
-    int dump_ret = bridge_dump_open(AUDIO_DUMP_PATH,
-                                     g_audio_src.sample_rate ? g_audio_src.sample_rate : 8000,
-                                     g_audio_src.channels ? g_audio_src.channels : 1,
-                                     g_audio_src.bits_per_sample ? g_audio_src.bits_per_sample : 16);
+    int dump_ret = bridge_dump_open(BRIDGE_AUDIO_DUMP_UPLINK, AUDIO_UPLINK_DUMP_PATH,
+                                    g_audio_src.sample_rate ? g_audio_src.sample_rate : 8000,
+                                    g_audio_src.channels ? g_audio_src.channels : 1,
+                                    g_audio_src.bits_per_sample ? g_audio_src.bits_per_sample : 16);
     if (dump_ret == 0) {
-        printf("[convai_bridge] %s: audio dump file opened: %s\n", tag, AUDIO_DUMP_PATH);
+        printf("[convai_bridge] %s: audio dump file opened: %s\n", tag, AUDIO_UPLINK_DUMP_PATH);
     } else {
-        printf("[convai_bridge] %s: WARNING: cannot open dump file %s\n", tag, AUDIO_DUMP_PATH);
+        printf("[convai_bridge] %s: WARNING: cannot open dump file %s\n", tag, AUDIO_UPLINK_DUMP_PATH);
     }
 
     goldie_sem_init(&g_audio_src.exit_sem);
@@ -239,7 +239,7 @@ static int start_record_thread(int (*fn)(void *), const char *tag)
         g_audio_src.running = 0;
         g_audio_src.ptt_pressed = 0;
         goldie_sem_destroy(&g_audio_src.exit_sem);
-        bridge_dump_close();
+        bridge_dump_close(BRIDGE_AUDIO_DUMP_UPLINK);
         printf("[convai_bridge] ERROR: %s record thread create failed — mic input disabled\n", tag);
     }
     return g_audio_src.thread_handle ? 0 : -1;
@@ -265,7 +265,7 @@ static void join_record_thread(void)
     AudioService *audio = (AudioService *)g_audio_src.audio_service;
     if (audio && audio->record_stop) audio->record_stop();
 
-    bridge_dump_close();
+    bridge_dump_close(BRIDGE_AUDIO_DUMP_UPLINK);
 }
 
 void bridge_uplink_start(void)
