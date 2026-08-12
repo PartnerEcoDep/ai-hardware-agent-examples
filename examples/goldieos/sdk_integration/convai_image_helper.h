@@ -5,10 +5,10 @@
 #include <stdlib.h>
 
 typedef struct ConvaiImageContext {
-    uint8_t* data;
-    size_t len;
-    const char* format;
-    bool sent;
+    uint8_t*     data;
+    size_t       len;
+    const char*  format;
+    bool         sent;
 } ConvaiImageContext;
 
 int convai_image_init(ConvaiImageContext* ctx, const char* file_path);

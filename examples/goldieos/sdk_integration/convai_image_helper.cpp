@@ -91,7 +91,7 @@ static int read_image_file(const char* path, uint8_t** out_data, size_t* out_len
     *out_len = 0;
 
     osFileHandle f;
-    if (os_fopen(&f, path, OS_FILE_READ) != OS_RESULT_OK) {
+    if (os_fopen(&f, path, 'rb') != 0) {
         printf("[Image] Failed to open file: %s\n", path);
         return -1;
     }
@@ -171,13 +171,13 @@ static int send_image_sync(void* sdk_handle, uint8_t* image_data, size_t image_l
 
     char* base64_data = NULL;
     size_t base64_len = 0;
-    if (encode_image_to_base64(g_image_data, g_image_len, &base64_data, &base64_len) != 0) {
+    if (encode_image_to_base64(image_data, image_len, &base64_data, &base64_len) != 0) {
         return -1;
     }
 
     char* json_str = NULL;
     size_t json_len = 0;
-    if (build_image_json(base64_data, base64_len, g_image_format, &json_str, &json_len) != 0) {
+    if (build_image_json(base64_data, base64_len, format, &json_str, &json_len) != 0) {
         os_free(base64_data);
         return -1;
     }
@@ -222,7 +222,7 @@ void convai_image_cleanup(ConvaiImageContext* ctx) {
 }
 
 int convai_image_send_async(void *sdk_handle, ConvaiImageContext *ctx) {
-    if (!sdk_handle || !image_data || !format) {
+    if (!sdk_handle || !ctx || !ctx->data || !ctx->format) {
         return -1;
     }
     if (ctx->sent) {
@@ -236,14 +236,14 @@ int convai_image_send_async(void *sdk_handle, ConvaiImageContext *ctx) {
     return ret;
 }
 
-bool convai_image_has_pending(const ConvaiImageContext *ctx) {
+bool convai_image_has_pending(const ConvaiImageContext* ctx) {
     return (ctx && ctx->data && !ctx->sent);
 }
 
-void convai_image_mark_sent(ConvaiImageContext *ctx) {
+void convai_image_mark_sent(ConvaiImageContext* ctx) {
     if (ctx) ctx->sent = true;
 }
 
-void convai_image_reset_sent(ConvaiImageContext *ctx) {
+void convai_image_reset_sent(ConvaiImageContext* ctx) {
     if (ctx) ctx->sent = false;
 }

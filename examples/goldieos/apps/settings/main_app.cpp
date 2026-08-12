@@ -1,5 +1,4 @@
 #include "main_ui.h"
-#include "../../sdk_integration/convai_image_helper.h"
 
 extern "C" {
 #include "goldie_osal.h"
