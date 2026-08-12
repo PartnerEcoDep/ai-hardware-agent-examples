@@ -61,7 +61,10 @@ file(GLOB COMMON_SERVICE_SRC
 )
 
 # SDK integration (replaces cloud_service) — platform/app-agnostic glue
-file(GLOB COMMON_SDK_INTEGRATION_SRC sdk_integration/*.c)
+file(GLOB COMMON_SDK_INTEGRATION_SRC
+        sdk_integration/*.c
+        sdk_integration/*.cpp
+)
 
 # App sources
 file(GLOB COMMON_APP_SRC

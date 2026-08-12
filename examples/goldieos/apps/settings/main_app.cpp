@@ -1,4 +1,5 @@
 #include "main_ui.h"
+#include "../../sdk_integration/convai_image_helper.h"
 
 extern "C" {
 #include "goldie_osal.h"
@@ -21,6 +22,8 @@ extern "C" {
 #include <stdlib.h>
 #include <string.h>
 
+#include "convai_image_helper.h"
+
 #include "rgb16_selected_32_32.h"
 #include "rgb16_avatar_male_152_136.h"
 #include "rgb16_avatar_female_152_136.h"
@@ -30,68 +33,6 @@ extern "C" {
 #include "goldie_thread.h"
 
 #include "app_icon.h"
-
-#define OS_FILE_READ "rb"
-#define OS_RESULT_OK 0
-
-#ifndef PLATFORM_TYPE_WS63
-
-typedef FILE* osFileHandle;
-
-static int os_fopen(osFileHandle* f, const char* path, const char* mode) {
-    *f = fopen(path, mode);
-    return (*f != NULL) ? 0 : -1;
-}
-
-static int os_fclose(osFileHandle* f) {
-    return fclose(*f);
-}
-
-static uint32_t os_fsize(osFileHandle* f) {
-    long pos = ftell(*f);
-    fseek(*f, 0, SEEK_END);
-    long size = ftell(*f);
-    fseek(*f, pos, SEEK_SET);
-    return (uint32_t)size;
-}
-
-static uint32_t os_fread(void* buf, uint32_t elsz, uint32_t count, osFileHandle* f) {
-    return fread(buf, elsz, count, *f);
-}
-
-#else
-
-typedef struct { void* dummy; } osFileHandle;
-
-static int os_fopen(osFileHandle* f, const char* path, const char* mode) {
-    (void)f; (void)path; (void)mode;
-    return -1;
-}
-
-static int os_fclose(osFileHandle* f) {
-    (void)f;
-    return 0;
-}
-
-static uint32_t os_fsize(osFileHandle* f) {
-    (void)f;
-    return 0;
-}
-
-static uint32_t os_fread(void* buf, uint32_t elsz, uint32_t count, osFileHandle* f) {
-    (void)buf; (void)elsz; (void)count; (void)f;
-    return 0;
-}
-
-#endif
-
-static void* os_malloc(size_t size) {
-    return malloc(size);
-}
-
-static void os_free(void* ptr) {
-    free(ptr);
-}
 
 static uint64_t get_time_ms(void) {
 #if defined(_WIN32) || defined(_WIN64)
@@ -124,10 +65,7 @@ static void get_time_string(char* buf, size_t buf_size) {
 static const char* TEST_IMAGE_PATH = "D:/test.png";
 static bool g_image_sent_this_turn = false;
 static int64_t g_listening_end_time = 0;
-
-static uint8_t* g_image_data = NULL;
-static size_t g_image_len = 0;
-static const char* g_image_format = NULL;
+static ConvaiImageContext g_image_ctx;
 
 static uint16_t* avatar_pic_list[] = {
     (uint16_t*)rgb16_avatar_female_152_136,
@@ -203,144 +141,6 @@ static const char* relationship_list_male[] = {
     "    冒险小队长",
     "    坚实守护者"
 };
-
-static const char* detect_image_format(const uint8_t* data, size_t len) {
-    if (len < 4) return NULL;
-    if (data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) return "jpeg";
-    if (data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47) return "png";
-    if (data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46) return "gif";
-    if (data[0] == 0x42 && data[1] == 0x4D) return "bmp";
-    return NULL;
-}
-
-static int read_image_file(const char* path, uint8_t** out_data, size_t* out_len) {
-    if (!path || !out_data || !out_len) return -1;
-    *out_data = NULL;
-    *out_len = 0;
-
-    osFileHandle f;
-    if (os_fopen(&f, path, OS_FILE_READ) != OS_RESULT_OK) {
-        printf("[Image] Failed to open file: %s\n", path);
-        return -1;
-    }
-
-    uint32_t size = os_fsize(&f);
-    if (size == 0 || size > 1024) {
-        printf("[Image] Invalid file size: %u (max: 1024 bytes)\n", size);
-        os_fclose(&f);
-        return -1;
-    }
-
-    uint8_t* data = (uint8_t*)os_malloc(size);
-    if (!data) {
-        printf("[Image] Failed to allocate memory\n");
-        os_fclose(&f);
-        return -1;
-    }
-
-    uint32_t read_bytes = os_fread(data, 1, size, &f);
-    os_fclose(&f);
-
-    if (read_bytes != size) {
-        printf("[Image] Failed to read file: %u != %u\n", read_bytes, size);
-        os_free(data);
-        return -1;
-    }
-
-    *out_data = data;
-    *out_len = size;
-    return 0;
-}
-
-static int encode_image_to_base64(const uint8_t* data, size_t len, char** out_base64, size_t* out_len) {
-    if (!data || !len || !out_base64 || !out_len) return -1;
-    size_t cap = ((len + 2) / 3) * 4 + 1;
-    char* buf = (char*)os_malloc(cap);
-    if (!buf) return -1;
-    size_t out = convai_base64_encode(buf, cap, data, len);
-    buf[out] = '\0';
-    *out_base64 = buf;
-    *out_len = out;
-    return 0;
-}
-
-static int build_image_json(const char* base64_data, size_t base64_len, const char* format, char** out_json, size_t* out_len) {
-    if (!base64_data || !format || !out_json || !out_len) return -1;
-    cJSON* root = cJSON_CreateObject();
-    if (!root) return -1;
-
-    static uint32_t s_img_event_counter = 0;
-    char event_id[32];
-    snprintf(event_id, sizeof(event_id), "img_%u", s_img_event_counter++);
-    cJSON_AddStringToObject(root, "event_id", event_id);
-    cJSON_AddStringToObject(root, "type", "image");
-
-    cJSON* image_obj = cJSON_CreateObject();
-    if (!image_obj) {
-        cJSON_Delete(root);
-        return -1;
-    }
-    cJSON_AddStringToObject(image_obj, "data", base64_data);
-    cJSON_AddStringToObject(image_obj, "format", format);
-    cJSON_AddItemToObject(root, "image", image_obj);
-
-    char* json_str = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (!json_str) return -1;
-    *out_json = json_str;
-    *out_len = strlen(json_str);
-    return 0;
-}
-
-static int send_image_via_message(void* sdk_handle) {
-    if (!sdk_handle || !g_image_data || !g_image_format) {
-        return -1;
-    }
-
-    char* base64_data = NULL;
-    size_t base64_len = 0;
-    if (encode_image_to_base64(g_image_data, g_image_len, &base64_data, &base64_len) != 0) {
-        return -1;
-    }
-
-    char* json_str = NULL;
-    size_t json_len = 0;
-    if (build_image_json(base64_data, base64_len, g_image_format, &json_str, &json_len) != 0) {
-        os_free(base64_data);
-        return -1;
-    }
-    os_free(base64_data);
-
-    int ret = convai_send_message(sdk_handle, json_str, json_len, NULL);
-    os_free(json_str);
-    os_free(g_image_data);
-    g_image_data = NULL;
-    g_image_len = 0;
-    g_image_format = NULL;
-    return ret;
-}
-
-static bool hasImage(void) {
-    if (g_image_data) {
-        os_free(g_image_data);
-        g_image_data = NULL;
-        g_image_len = 0;
-        g_image_format = NULL;
-    }
-
-    if (read_image_file(TEST_IMAGE_PATH, &g_image_data, &g_image_len) != 0) {
-        return false;
-    }
-
-    g_image_format = detect_image_format(g_image_data, g_image_len);
-    if (!g_image_format) {
-        os_free(g_image_data);
-        g_image_data = NULL;
-        g_image_len = 0;
-        return false;
-    }
-    return true;
-}
 
 /* ---- voice_type mapping tables ---- */
 #if defined(CONVAI_USE_MINIMAX_VOICE)
@@ -530,12 +330,14 @@ static void cloud_status_callback(convai_status_e status) {
              * stop_and_hide 的 visible 守卫: 会话起始 IDLE 是 no-op. */
             talk_page_stop_and_hide();
             g_image_sent_this_turn = false;
+            convai_image_cleanup(&g_image_ctx);
+            convai_image_init(&g_image_ctx, TEST_IMAGE_PATH);
             break;
         case CONVAI_STATUS_LISTENING:
             text = "倾听中"; color = 0x0410;
-            if (!g_image_sent_this_turn && sdk_engine && hasImage()) {
+            if (!g_image_sent_this_turn && sdk_engine && convai_image_has_pending(&g_image_ctx)) {
                 g_image_sent_this_turn = true;
-                send_image_via_message(sdk_engine);
+                convai_image_send_async(sdk_engine, &g_image_ctx);
             }
             break;
         case CONVAI_STATUS_THINKING:
