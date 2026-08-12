@@ -34,6 +34,8 @@ extern "C" {
 #define OS_FILE_READ "rb"
 #define OS_RESULT_OK 0
 
+#ifndef PLATFORM_TYPE_WS63
+
 typedef FILE* osFileHandle;
 
 static int os_fopen(osFileHandle* f, const char* path, const char* mode) {
@@ -41,21 +43,47 @@ static int os_fopen(osFileHandle* f, const char* path, const char* mode) {
     return (*f != NULL) ? 0 : -1;
 }
 
-static int os_fclose(osFileHandle f) {
-    return fclose(f);
+static int os_fclose(osFileHandle* f) {
+    return fclose(*f);
 }
 
-static uint32_t os_fsize(osFileHandle f) {
-    long pos = ftell(f);
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, pos, SEEK_SET);
+static uint32_t os_fsize(osFileHandle* f) {
+    long pos = ftell(*f);
+    fseek(*f, 0, SEEK_END);
+    long size = ftell(*f);
+    fseek(*f, pos, SEEK_SET);
     return (uint32_t)size;
 }
 
-static uint32_t os_fread(void* buf, uint32_t elsz, uint32_t count, osFileHandle f) {
-    return fread(buf, elsz, count, f);
+static uint32_t os_fread(void* buf, uint32_t elsz, uint32_t count, osFileHandle* f) {
+    return fread(buf, elsz, count, *f);
 }
+
+#else
+
+typedef struct { void* dummy; } osFileHandle;
+
+static int os_fopen(osFileHandle* f, const char* path, const char* mode) {
+    (void)f; (void)path; (void)mode;
+    return -1;
+}
+
+static int os_fclose(osFileHandle* f) {
+    (void)f;
+    return 0;
+}
+
+static uint32_t os_fsize(osFileHandle* f) {
+    (void)f;
+    return 0;
+}
+
+static uint32_t os_fread(void* buf, uint32_t elsz, uint32_t count, osFileHandle* f) {
+    (void)buf; (void)elsz; (void)count; (void)f;
+    return 0;
+}
+
+#endif
 
 static void* os_malloc(size_t size) {
     return malloc(size);
@@ -196,22 +224,22 @@ static int read_image_file(const char* path, uint8_t** out_data, size_t* out_len
         return -1;
     }
 
-    uint32_t size = os_fsize(f);
+    uint32_t size = os_fsize(&f);
     if (size == 0 || size > 1024) {
         printf("[Image] Invalid file size: %u (max: 1024 bytes)\n", size);
-        os_fclose(f);
+        os_fclose(&f);
         return -1;
     }
 
     uint8_t* data = (uint8_t*)os_malloc(size);
     if (!data) {
         printf("[Image] Failed to allocate memory\n");
-        os_fclose(f);
+        os_fclose(&f);
         return -1;
     }
 
-    uint32_t read_bytes = os_fread(data, 1, size, f);
-    os_fclose(f);
+    uint32_t read_bytes = os_fread(data, 1, size, &f);
+    os_fclose(&f);
 
     if (read_bytes != size) {
         printf("[Image] Failed to read file: %u != %u\n", read_bytes, size);
