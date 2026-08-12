@@ -91,7 +91,7 @@ static int read_image_file(const char* path, uint8_t** out_data, size_t* out_len
     *out_len = 0;
 
     osFileHandle f;
-    if (os_fopen(&f, path, 'rb') != 0) {
+    if (os_fopen(&f, path, "rb") != 0) {
         printf("[Image] Failed to open file: %s\n", path);
         return -1;
     }
@@ -138,6 +138,7 @@ static int encode_image_to_base64(const uint8_t* data, size_t len, char** out_ba
 
 static int build_image_json(const char* base64_data, size_t base64_len, const char* format, char** out_json, size_t* out_len) {
     if (!base64_data || !format || !out_json || !out_len) return -1;
+
     cJSON* root = cJSON_CreateObject();
     if (!root) return -1;
 
@@ -159,6 +160,7 @@ static int build_image_json(const char* base64_data, size_t base64_len, const ch
     char* json_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!json_str) return -1;
+
     *out_json = json_str;
     *out_len = strlen(json_str);
     return 0;
@@ -221,7 +223,7 @@ void convai_image_cleanup(ConvaiImageContext* ctx) {
     ctx->sent = false;
 }
 
-int convai_image_send_async(void *sdk_handle, ConvaiImageContext *ctx) {
+int convai_image_send_async(void* sdk_handle, ConvaiImageContext* ctx) {
     if (!sdk_handle || !ctx || !ctx->data || !ctx->format) {
         return -1;
     }
