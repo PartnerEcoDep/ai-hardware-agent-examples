@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #include "cJSON.h"
 #include "convai/convai_api.h"
@@ -75,6 +76,8 @@ static void os_free(void* ptr) {
 }
 
 #endif
+
+#ifndef PLATFORM_TYPE_WS63
 
 static const char* detect_image_format(const uint8_t* data, size_t len) {
     if (len < 4) return NULL;
@@ -237,6 +240,28 @@ int convai_image_send_async(void* sdk_handle, ConvaiImageContext* ctx) {
     }
     return ret;
 }
+
+#else
+
+int convai_image_init(ConvaiImageContext* ctx, const char* file_path) {
+    (void)ctx; (void)file_path;
+    return -1;
+}
+
+void convai_image_cleanup(ConvaiImageContext* ctx) {
+    if (!ctx) return;
+    ctx->data = NULL;
+    ctx->len = 0;
+    ctx->format = NULL;
+    ctx->sent = false;
+}
+
+int convai_image_send_async(void* sdk_handle, ConvaiImageContext* ctx) {
+    (void)sdk_handle; (void)ctx;
+    return -1;
+}
+
+#endif
 
 bool convai_image_has_pending(const ConvaiImageContext* ctx) {
     return (ctx && ctx->data && !ctx->sent);
