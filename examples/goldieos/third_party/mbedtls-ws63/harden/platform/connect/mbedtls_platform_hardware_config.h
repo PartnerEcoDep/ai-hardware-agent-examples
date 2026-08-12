@@ -45,11 +45,15 @@ extern "C" {
 #undef MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA_ENABLED
 #endif
 
-/* goldieos: RAM 优化 (与 convai_limits.h 预算一致, Win 模拟器实测峰值 12,239B) */
+#include "convai_memory_budget.h"
+
+/* goldieos: RAM 优化（预算统一由 convai_memory_budget.h 管理） */
 #undef MBEDTLS_SSL_KEEP_PEER_CERTIFICATE   /* 握手后释放对端证书 */
 #define MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH /* 记录缓冲按实际使用收缩 */
-#define MBEDTLS_SSL_IN_CONTENT_LEN  2048
-#define MBEDTLS_SSL_OUT_CONTENT_LEN 2048
+#undef MBEDTLS_SSL_IN_CONTENT_LEN
+#undef MBEDTLS_SSL_OUT_CONTENT_LEN
+#define MBEDTLS_SSL_IN_CONTENT_LEN  CONVAI_BUDGET_TLS_IN_CONTENT_BYTES
+#define MBEDTLS_SSL_OUT_CONTENT_LEN CONVAI_BUDGET_TLS_OUT_CONTENT_BYTES
 /*******************************************alternative macro*********************************************/
 
 #define MBEDTLS_ENTROPY_HARDWARE_ALT

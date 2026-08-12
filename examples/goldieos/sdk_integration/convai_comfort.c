@@ -13,6 +13,7 @@
  */
 #include "convai_comfort.h"
 #include "convai_audio_internal.h"   /* bridge_get_engine() */
+#include "convai_memory_budget.h"
 #include "goldie_osal.h"
 
 #include <stdio.h>
@@ -43,7 +44,7 @@ static void send_comfort_message(void)
     if (!bridge_get_engine()) return;
 
     printf("[convai_comfort] RESPONSE TIMEOUT - sending comfort message\n");
-    char json[256];
+    char json[CONVAI_BUDGET_COMFORT_JSON_BYTES];
     int n = snprintf(json, sizeof(json),
         "{\"type\":\"conversation.items.create\",\"items\":[{\"type\":\"ExternalTextToSpeech\",\"text\":\"%s\"}]}",
         COMFORT_TEXT);
@@ -97,7 +98,8 @@ void bridge_comfort_start(void)
 
     goldie_thread_lock();
     ctrl->thread_handle = goldie_thread_create(
-            comfort_watchdog_thread, NULL, "convai_comfort", 0x800);
+            comfort_watchdog_thread, NULL, "convai_comfort",
+            CONVAI_BUDGET_COMFORT_STACK_BYTES);
     if (ctrl->thread_handle) {
         goldie_thread_set_priority(ctrl->thread_handle, 20);
     } else {
