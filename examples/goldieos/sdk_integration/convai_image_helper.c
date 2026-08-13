@@ -80,7 +80,7 @@ static size_t local_base64_encode(char *dst, size_t dst_cap, const uint8_t *src,
     static const char ENCODE_TABLE[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     size_t out_len = ((src_len + 2) / 3) * 4;
-    if (dst_cap < out_len +1) return 0;
+    if (dst_cap < out_len + 1) return 0;
 
     size_t i, j;
     for (i = 0, j = 0; i < src_len; i += 3) {
@@ -323,7 +323,7 @@ void convai_image_state_on_answering(ConvaiImageState* state) {
         char time_str[64];
         get_time_string(time_str, sizeof(time_str));
         uint64_t delta = answer_start_time - state->listening_end_time;
-        printf("[Image] ANSWERING started at %s\n", time_str);
+        printf("[Image] ANSWERING started at: %s\n", time_str);
         printf("[Image] Processing time (LISTENING->ANSWERING): %llu ms\n", (unsigned long long)delta);
         state->listening_end_time = 0;
     }

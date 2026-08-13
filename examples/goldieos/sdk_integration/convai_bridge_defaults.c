@@ -16,6 +16,7 @@
 #define BRIDGE_DEFAULT_PRODUCT_KEY    "your_product_key"    // ← 替换为实际的 product_key
 #define BRIDGE_DEFAULT_PRODUCT_SECRET "your_product_secret" // ← 替换为实际的 product_secret
 #define BRIDGE_DEFAULT_DEVICE_NAME    "your_device_name"    // ← 替换为实际的 device_name
+#define BRIDGE_DEFAULT_API_KEY        NULL                  // ← 使用 convai.cfg 中的 api_key
 
 /* ---- Default startup config (AI personality/voice) ---- */
 #define DEFAULT_STARTUP_CONFIG \
@@ -65,26 +66,43 @@ const char *bridge_get_default_startup_config(void)
 const char *bridge_build_config_json(char *buf, size_t buf_size,
                                      const char *device_name)
 {
-    if (device_name == NULL || device_name[0] == '\0') {
-        device_name = BRIDGE_DEFAULT_DEVICE_NAME;
-    }
+    const char *api_key = cfg_or("api_key", NULL);
 
     const char *server_url = cfg_or("server_url", NULL);
 
-    int n = snprintf(buf, buf_size,
-        "{"
-            "\"info\":{"
-                "\"product_id\":\"%s\","
-                "\"product_key\":\"%s\","
-                "\"product_secret\":\"%s\","
-                "\"device_name\":\"%s\""
+    int n;
+
+    if (api_key != NULL && api_key[0] != '\0') {
+        /* API-Key mode: onley api_key is needed */
+        n = snprintf(buf, buf_size,
+            "{"
+                "\"info\":{"
+                    "\"api_key\":\"%s\""
             "},"
             "\"ws\":{",
-        cfg_or("product_id",      BRIDGE_DEFAULT_PRODUCT_ID),
-        cfg_or("product_key",     BRIDGE_DEFAULT_PRODUCT_KEY),
-        cfg_or("product_secret",  BRIDGE_DEFAULT_PRODUCT_SECRET),
-        device_name
-    );
+            api_key
+        );
+    } else {
+        /* Product-Key mode: requires device_name, product_id, product_key, product_secret */
+        if (device_name != NULL || device_name[0] != '\0') {
+            device_name = BRIDGE_DEFAULT_DEVICE_NAME;
+        }
+
+        n = snprintf(buf, buf_size,
+            "{"
+                "\"info\":{"
+                    "\"product_id\":\"%s\","
+                    "\"product_key\":\"%s\","
+                    "\"product_secret\":\"%s\","
+                    "\"device_name\":\"%s\""
+                "},"
+                "\"ws\":{",
+            cfg_or("product_id",      BRIDGE_DEFAULT_PRODUCT_ID),
+            cfg_or("product_key",     BRIDGE_DEFAULT_PRODUCT_KEY),
+            cfg_or("product_secret",  BRIDGE_DEFAULT_PRODUCT_SECRET),
+            device_name
+        );
+    }
 
     if (server_url != NULL) {
         n += snprintf(buf + n, buf_size - n,
