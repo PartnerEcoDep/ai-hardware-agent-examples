@@ -32,8 +32,7 @@ extern "C" {
 
 #include "app_icon.h"
 
-static const char* TEST_IMAGE_PATH = "D:/test.png";
-static ConvaiImageState g_image_state;
+static convai_image_state_t g_image_state;
 
 static uint16_t* avatar_pic_list[] = {
     (uint16_t*)rgb16_avatar_female_152_136,
@@ -1748,7 +1747,7 @@ static void goldie_app_run(void)
 {
     main_ui_init();
     init_views();
-    convai_image_state_init(&g_image_state, TEST_IMAGE_PATH);
+    convai_image_state_init(&g_image_state, CONVAI_IMAGE_DEFAULT_PATH);
     sdk_engine = convai_bridge_get_engine();
     convai_bridge_on_status(cloud_status_callback);
     convai_bridge_on_event(cloud_event_callback);
