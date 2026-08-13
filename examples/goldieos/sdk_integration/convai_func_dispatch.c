@@ -66,7 +66,7 @@ static void func_dispatch_message_cb(const char *json_str)
      * function_call_output per call. */
     cJSON *response = cJSON_CreateObject();
     cJSON_AddStringToObject(response, "type", "conversation.item.create");
-    cJSON *items = cJSON_AddArrayToObject(response, "item");
+    cJSON *items = cJSON_AddArrayToObject(response, "items");
 
     for (int i = 0; i < call_count; i++) {
         cJSON *call = cJSON_GetArrayItem(calls, i);
