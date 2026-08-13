@@ -84,7 +84,7 @@ const char *bridge_build_config_json(char *buf, size_t buf_size,
         );
     } else {
         /* Product-Key mode: requires device_name, product_id, product_key, product_secret */
-        if (device_name != NULL || device_name[0] != '\0') {
+        if (device_name == NULL || device_name[0] == '\0') {
             device_name = BRIDGE_DEFAULT_DEVICE_NAME;
         }
 

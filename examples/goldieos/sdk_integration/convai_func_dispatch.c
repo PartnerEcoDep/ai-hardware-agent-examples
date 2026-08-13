@@ -62,11 +62,11 @@ static void func_dispatch_message_cb(const char *json_str)
     printf("FunctionCall Received (%d calls)\n", call_count);
     printf("========================================\n");
 
-    /* Build the reply: a conversation.items.create with one
+    /* Build the reply: a conversation.item.create with one
      * function_call_output per call. */
     cJSON *response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "type", "conversation.items.create");
-    cJSON *items = cJSON_AddArrayToObject(response, "items");
+    cJSON_AddStringToObject(response, "type", "conversation.item.create");
+    cJSON *items = cJSON_AddArrayToObject(response, "item");
 
     for (int i = 0; i < call_count; i++) {
         cJSON *call = cJSON_GetArrayItem(calls, i);
