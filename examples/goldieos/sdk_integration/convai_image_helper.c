@@ -45,6 +45,8 @@ static void get_time_string(char* buf, size_t buf_size) {
 
 #ifndef PLATFORM_TYPE_WS63
 
+const char* CONVAI_IMAGE_DEFAULT_PATH = "D:/test.png";
+
 typedef FILE* osFileHandle;
 
 static int os_fopen(osFileHandle* f, const char* path, const char* mode) {
@@ -219,7 +221,7 @@ static int send_image_core(void* sdk_handle, uint8_t* image_data, size_t image_l
     return ret;
 }
 
-int convai_image_init(ConvaiImageContext* ctx, const char* file_path) {
+int convai_image_init(convai_image_context_t* ctx, const char* file_path) {
     if (!ctx || !file_path) return -1;
 
     memset(ctx, 0, sizeof(*ctx));
@@ -239,7 +241,7 @@ int convai_image_init(ConvaiImageContext* ctx, const char* file_path) {
     return 0;
 }
 
-void convai_image_cleanup(ConvaiImageContext* ctx) {
+void convai_image_cleanup(convai_image_context_t* ctx) {
     if (!ctx) return;
     if (ctx->data) {
         os_free(ctx->data);
@@ -250,7 +252,7 @@ void convai_image_cleanup(ConvaiImageContext* ctx) {
     ctx->sent = false;
 }
 
-int convai_image_send(void* sdk_handle, ConvaiImageContext* ctx) {
+int convai_image_send(void* sdk_handle, convai_image_context_t* ctx) {
     if (!sdk_handle || !ctx || !ctx->data || !ctx->format) {
         return -1;
     }
@@ -265,26 +267,26 @@ int convai_image_send(void* sdk_handle, ConvaiImageContext* ctx) {
     return ret;
 }
 
-bool convai_image_has_pending(const ConvaiImageContext* ctx) {
+bool convai_image_has_pending(const convai_image_context_t* ctx) {
     return (ctx && ctx->data && !ctx->sent);
 }
 
-void convai_image_mark_sent(ConvaiImageContext* ctx) {
+void convai_image_mark_sent(convai_image_context_t* ctx) {
     if (ctx) ctx->sent = true;
 }
 
-void convai_image_reset_sent(ConvaiImageContext* ctx) {
+void convai_image_reset_sent(convai_image_context_t* ctx) {
     if (ctx) ctx->sent = false;
 }
 
-void convai_image_state_init(ConvaiImageState* state, const char* image_path) {
+void convai_image_state_init(convai_image_state_t* state, const char* image_path) {
     if (!state || !image_path) return;
     memset(state, 0, sizeof(*state));
     state->image_path = image_path;
     convai_image_init(&state->ctx, image_path);
 }
 
-void convai_image_state_cleanup(ConvaiImageState* state) {
+void convai_image_state_cleanup(convai_image_state_t* state) {
     if (!state) return;
     convai_image_cleanup(&state->ctx);
     state->image_path = NULL;
@@ -292,14 +294,14 @@ void convai_image_state_cleanup(ConvaiImageState* state) {
     state->listening_end_time = 0;
 }
 
-void convai_image_state_on_idle(ConvaiImageState* state) {
+void convai_image_state_on_idle(convai_image_state_t* state) {
     if (!state) return;
     state->image_sent_this_turn = false;
     convai_image_cleanup(&state->ctx);
     convai_image_init(&state->ctx, state->image_path);
 }
 
-int convai_image_state_on_listening(void* sdk_handle, ConvaiImageState* state) {
+int convai_image_state_on_listening(void* sdk_handle, convai_image_state_t* state) {
     if (!sdk_handle || !state) return -1;
     if (!state->image_sent_this_turn && convai_image_has_pending(&state->ctx)) {
         state->image_sent_this_turn = true;
@@ -308,7 +310,7 @@ int convai_image_state_on_listening(void* sdk_handle, ConvaiImageState* state) {
     return 0;
 }
 
-void convai_image_state_on_thinking(ConvaiImageState* state) {
+void convai_image_state_on_thinking(convai_image_state_t* state) {
     if (!state) return;
     state->listening_end_time = get_time_ms();
     char time_str[64];
@@ -316,7 +318,7 @@ void convai_image_state_on_thinking(ConvaiImageState* state) {
     printf("[Image] LISTENING ended at: %s\n", time_str);
 }
 
-void convai_image_state_on_answering(ConvaiImageState* state) {
+void convai_image_state_on_answering(convai_image_state_t* state) {
     if (!state) return;
     if (state->listening_end_time > 0) {
         uint64_t answer_start_time = get_time_ms();
@@ -331,12 +333,14 @@ void convai_image_state_on_answering(ConvaiImageState* state) {
 
 #else
 
-int convai_image_init(ConvaiImageContext* ctx, const char* file_path) {
+const char* CONVAI_IMAGE_DEFAULT_PATH = NULL;
+
+int convai_image_init(convai_image_context_t* ctx, const char* file_path) {
     (void)ctx; (void)file_path;
     return -1;
 }
 
-void convai_image_cleanup(ConvaiImageContext* ctx) {
+void convai_image_cleanup(convai_image_context_t* ctx) {
     if (!ctx) return;
     ctx->data = NULL;
     ctx->len = 0;
@@ -344,33 +348,33 @@ void convai_image_cleanup(ConvaiImageContext* ctx) {
     ctx->sent = false;
 }
 
-int convai_image_send(void* sdk_handle, ConvaiImageContext* ctx) {
+int convai_image_send(void* sdk_handle, convai_image_context_t* ctx) {
     (void)sdk_handle; (void)ctx;
     return -1;
 }
 
-void convai_image_state_init(ConvaiImageState* state, const char* image_path) {
+void convai_image_state_init(convai_image_state_t* state, const char* image_path) {
     (void)state; (void)image_path;
 }
 
-void convai_image_state_cleanup(ConvaiImageState* state) {
+void convai_image_state_cleanup(convai_image_state_t* state) {
     (void)state;
 }
 
-void convai_image_state_on_idle(ConvaiImageState* state) {
+void convai_image_state_on_idle(convai_image_state_t* state) {
     (void)state;
 }
 
-int convai_image_state_on_listening(void* sdk_handle, ConvaiImageState* state) {
+int convai_image_state_on_listening(void* sdk_handle, convai_image_state_t* state) {
     (void)sdk_handle; (void)state;
     return -1;
 }
 
-void convai_image_state_on_thinking(ConvaiImageState* state) {
+void convai_image_state_on_thinking(convai_image_state_t* state) {
     (void)state;
 }
 
-void convai_image_state_on_answering(ConvaiImageState* state) {
+void convai_image_state_on_answering(convai_image_state_t* state) {
     (void)state;
 }
 
