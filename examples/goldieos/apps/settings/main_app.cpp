@@ -32,34 +32,6 @@ extern "C" {
 
 #include "app_icon.h"
 
-static uint64_t get_time_ms(void) {
-#if defined(_WIN32) || defined(_WIN64)
-    return GetTickCount64();
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
-#endif
-}
-
-static void get_time_string(char* buf, size_t buf_size) {
-#if defined(_WIN32) || defined(_WIN64)
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    snprintf(buf, buf_size, "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-             st.wYear, st.wMonth, st.wDay,
-             st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    struct tm* tm_info = localtime(&ts.tv_sec);
-    int ms = ts.tv_nsec / 1000000;
-    strftime(buf, buf_size, "%Y-%m-%d %H:%M:%S", tm_info);
-    size_t len = strlen(buf);
-    snprintf(buf + len, buf_size - len, ".%03d", ms);
-#endif
-}
-
 static const char* TEST_IMAGE_PATH = "D:/test.png";
 static ConvaiImageState g_image_state;
 
