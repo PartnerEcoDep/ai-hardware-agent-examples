@@ -10,7 +10,6 @@ extern "C" {
 #include "convai/convai_api.h"
 #include "cJSON.h"
 #include "alarm_service.h"
-#include "utils/convai_base64.h"
 #ifdef SUPPORT_SLE
 #include "sle_sdp_service.h"
 #include "platform/ws63/sle_drv.h"
@@ -62,9 +61,7 @@ static void get_time_string(char* buf, size_t buf_size) {
 }
 
 static const char* TEST_IMAGE_PATH = "D:/test.png";
-static bool g_image_sent_this_turn = false;
-static int64_t g_listening_end_time = 0;
-static ConvaiImageContext g_image_ctx;
+static ConvaiImageState g_image_state;
 
 static uint16_t* avatar_pic_list[] = {
     (uint16_t*)rgb16_avatar_female_152_136,
@@ -328,35 +325,19 @@ static void cloud_status_callback(convai_status_e status) {
             /* 异常终止(服务端错误/超时直返 IDLE, 无 ANSWER_FINISHED) 也切回 cloud.
              * stop_and_hide 的 visible 守卫: 会话起始 IDLE 是 no-op. */
             talk_page_stop_and_hide();
-            g_image_sent_this_turn = false;
-            convai_image_cleanup(&g_image_ctx);
-            convai_image_init(&g_image_ctx, TEST_IMAGE_PATH);
+            convai_image_state_on_idle(&g_image_state);
             break;
         case CONVAI_STATUS_LISTENING:
             text = "倾听中"; color = 0x0410;
-            if (!g_image_sent_this_turn && sdk_engine && convai_image_has_pending(&g_image_ctx)) {
-                g_image_sent_this_turn = true;
-                convai_image_send_async(sdk_engine, &g_image_ctx);
-            }
+            convai_image_state_on_listening(sdk_engine, &g_image_state);
             break;
         case CONVAI_STATUS_THINKING:
             text = "思考中"; color = 0xFC00;
-            g_listening_end_time = get_time_ms();
-            char time_str[64];
-            get_time_string(time_str, sizeof(time_str));
-            printf("[Image] LISTENING ended at: %s\n", time_str);
+            convai_image_state_on_thinking(&g_image_state);
             break;
         case CONVAI_STATUS_ANSWERING:
             text = "回答中"; color = 0x07E0;
-            if (g_listening_end_time > 0) {
-                uint64_t answer_start_time = get_time_ms();
-                char time_str[64];
-                get_time_string(time_str, sizeof(time_str));
-                uint64_t delta = answer_start_time - g_listening_end_time;
-                printf("[Image] ANSWERING started at: %s\n", time_str);
-                printf("[Image] Processing time (LISTENING->ANSWERING): %llu ms\n", (unsigned long long)delta);
-                g_listening_end_time = 0;
-            }
+            convai_image_state_on_answering(&g_image_state);
             /* 每次 AI 回答都切到表情页(talk page), 默认 neutral 表情.
              * 若 AI 下发 emotion functioncall, handle_emotion 通过
              * talk_page_set_emotion 设表情, anim 线程下帧切对应表情.
@@ -1795,6 +1776,7 @@ static void goldie_app_run(void)
 {
     main_ui_init();
     init_views();
+    convai_image_state_init(&g_image_state, TEST_IMAGE_PATH);
     sdk_engine = convai_bridge_get_engine();
     convai_bridge_on_status(cloud_status_callback);
     convai_bridge_on_event(cloud_event_callback);
