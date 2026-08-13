@@ -16,10 +16,10 @@ typedef struct ConvaiImageContext {
 } ConvaiImageContext;
 
 typedef struct ConvaiImageState {
-    ConvaiImageContext* ctx;
-    const char*         image_path;
-    bool                image_sent_this_turn;
-    int64_t             listening_end_time;
+    ConvaiImageContext ctx;
+    const char*        image_path;
+    bool               image_sent_this_turn;
+    int64_t            listening_end_time;
 } ConvaiImageState;
 
 int convai_image_init(ConvaiImageContext* ctx, const char* file_path);

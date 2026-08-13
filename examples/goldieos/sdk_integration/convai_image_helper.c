@@ -18,7 +18,7 @@ static uint64_t get_time_ms(void) {
     return GetTickCount64();
 }
 
-static void get_time_string(char* buf, size_t buf_len) {
+static void get_time_string(char* buf, size_t buf_size) {
     SYSTEMTIME st;
     GetLocalTime(&st);
     snprintf(buf, buf_size, "%04d-%02d-%02d %02d:%02d:%02d.%03d",
@@ -32,7 +32,7 @@ static uint64_t get_time_ms(void) {
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-static void get_time_string(char* buf, size_t buf_len) {
+static void get_time_string(char* buf, size_t buf_size) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     struct tm* tm_info = localtime(&ts.tv_sec);
@@ -78,7 +78,7 @@ static void os_free(void* ptr) {
 
 static size_t local_base64_encode(char *dst, size_t dst_cap, const uint8_t *src, size_t src_len) {
     static const char ENCODE_TABLE[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcedfghijklmnopqrstucwxyz0123456789+/";
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     size_t out_len = ((src_len + 2) / 3) * 4;
     if (dst_cap < out_len +1) return 0;
 
@@ -286,7 +286,7 @@ void convai_image_state_init(ConvaiImageState* state, const char* image_path) {
 
 void convai_image_state_cleanup(ConvaiImageState* state) {
     if (!state) return;
-    convai_iamge_cleanup(&state->ctx);
+    convai_image_cleanup(&state->ctx);
     state->image_path = NULL;
     state->image_sent_this_turn = false;
     state->listening_end_time = 0;
@@ -370,7 +370,7 @@ void convai_image_state_on_thinking(ConvaiImageState* state) {
     (void)state;
 }
 
-void convai_image_state_answering(ConvaiImageState* state) {
+void convai_image_state_on_answering(ConvaiImageState* state) {
     (void)state;
 }
 
