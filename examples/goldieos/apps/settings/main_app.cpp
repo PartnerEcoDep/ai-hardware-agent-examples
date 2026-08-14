@@ -1,4 +1,5 @@
 #include "main_ui.h"
+
 extern "C" {
 #include "goldie_osal.h"
 #include "service_manager.h"
@@ -14,6 +15,13 @@ extern "C" {
 #include "platform/ws63/sle_drv.h"
 #endif
 }
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "convai_image_helper.h"
+
 #include "rgb16_selected_32_32.h"
 #include "rgb16_avatar_male_152_136.h"
 #include "rgb16_avatar_female_152_136.h"
@@ -23,6 +31,8 @@ extern "C" {
 #include "goldie_thread.h"
 
 #include "app_icon.h"
+
+static convai_image_state_t g_image_state;
 
 static uint16_t* avatar_pic_list[] = {
     (uint16_t*)rgb16_avatar_female_152_136,
@@ -286,13 +296,19 @@ static void cloud_status_callback(convai_status_e status) {
             /* 异常终止(服务端错误/超时直返 IDLE, 无 ANSWER_FINISHED) 也切回 cloud.
              * stop_and_hide 的 visible 守卫: 会话起始 IDLE 是 no-op. */
             talk_page_stop_and_hide();
+            convai_image_state_on_idle(&g_image_state);
             break;
         case CONVAI_STATUS_LISTENING:
-            text = "倾听中"; color = 0x0410; break;
+            text = "倾听中"; color = 0x0410;
+            convai_image_state_on_listening(sdk_engine, &g_image_state);
+            break;
         case CONVAI_STATUS_THINKING:
-            text = "思考中"; color = 0xFC00; break;
+            text = "思考中"; color = 0xFC00;
+            convai_image_state_on_thinking(&g_image_state);
+            break;
         case CONVAI_STATUS_ANSWERING:
             text = "回答中"; color = 0x07E0;
+            convai_image_state_on_answering(&g_image_state);
             /* 每次 AI 回答都切到表情页(talk page), 默认 neutral 表情.
              * 若 AI 下发 emotion functioncall, handle_emotion 通过
              * talk_page_set_emotion 设表情, anim 线程下帧切对应表情.
@@ -1731,6 +1747,7 @@ static void goldie_app_run(void)
 {
     main_ui_init();
     init_views();
+    convai_image_state_init(&g_image_state, CONVAI_IMAGE_DEFAULT_PATH);
     sdk_engine = convai_bridge_get_engine();
     convai_bridge_on_status(cloud_status_callback);
     convai_bridge_on_event(cloud_event_callback);

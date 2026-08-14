@@ -144,7 +144,7 @@ handler 只需设置 `*output_str`，主循环自动构建完整的回复 JSON�
 
 ```json
 {
-  "type": "conversation.items.create",
+  "type": "conversation.item.create",
   "items": [
     {
       "type": "function_call_output",
@@ -340,10 +340,10 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
 
 ### 消息流向
 
-| 消息 | 方向 | 说明 |
-|------|------|------|
+| 消息                                    | 方向 | 说明 |
+|-----------------------------------------|------|------|
 | `response.function_call_arguments.done` | Agent → Examples | 携带调用参数 |
-| `conversation.items.create` | Examples → Agent | 返回执行结果（主循环自动构建） |
+| `conversation.item.create`              | Examples → Agent | 返回执行结果（主循环自动构建） |
 
 ### AI 下发的 JSON
 
@@ -366,7 +366,7 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
 
 ```json
 {
-  "type": "conversation.items.create",
+  "type": "conversation.item.create",
   "items": [
     {
       "type": "function_call_output",
