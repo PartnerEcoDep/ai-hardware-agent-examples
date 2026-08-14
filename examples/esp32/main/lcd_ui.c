@@ -326,14 +326,9 @@ void lcd_ui_center_text(int y, const char *str, uint16_t fg, uint16_t bg) {
 void lcd_ui_flush(void) {
     if (s_fb == NULL) return;
 
-    /* 将 framebuffer 一次性刷新到 LCD
-     * esp_lcd_panel_draw_bitmap 期望主机字节序的 RGB565 数据，
-     * 但我们的 s_fb 存的是大端字节序。
-     * 需要转换回主机序再发送，或者直接分批发送。
-     *
-     * 由于 DMA 传输量大，这里逐行刷新以避免一次分配过大的临时缓冲。
-     * 每行 320×2 = 640 字节，20 行为一组 = 12800 字节。 */
-    const int rows_per_batch = 20;
+    /* 将 framebuffer 刷新到 LCD。
+     * 缩小批次并加帧间延时来减少撕裂，直到硬件 TE 可用。 */
+    const int rows_per_batch = 5;  /* 5 行一批，约 3.2KB DMA */
     uint16_t *batch = (uint16_t *)heap_caps_malloc(
         LCD_UI_WIDTH * rows_per_batch * sizeof(uint16_t),
         MALLOC_CAP_DMA);
@@ -361,7 +356,223 @@ void lcd_ui_flush(void) {
             ESP_LOGE(TAG, "lcd_ui_flush draw_bitmap y=%d failed: %d", y, ret);
             break;
         }
+
+        /* 帧间微延时，等待面板扫描线移开 */
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     free(batch);
+}
+
+/* ===================================================================
+ *  增强渲染 API 实现（新增）
+ * =================================================================== */
+
+void lcd_ui_draw_char_scaled(int x, int y, char c, int scale,
+                             uint16_t fg, uint16_t bg) {
+    if (s_fb == NULL) return;
+    if (scale < 1) scale = 1;
+    if (scale > 4) scale = 4;
+
+    int char_w = 8 * scale;
+    int char_h = 16 * scale;
+
+    /* 裁剪 */
+    if (x < 0 || y < 0 || x + char_w > LCD_UI_WIDTH || y + char_h > LCD_UI_HEIGHT) {
+        return;
+    }
+
+    if (c < 0x20 || c > 0x7E) return;
+
+    int idx = c - 0x20;
+    const uint8_t *glyph = font_8x16[idx];
+
+    uint16_t fg_be = host_to_be(fg);
+    uint16_t bg_be = host_to_be(bg);
+
+    for (int row = 0; row < 16; row++) {
+        uint8_t line = glyph[row];
+        for (int col = 0; col < 8; col++) {
+            uint16_t pixel = (line & (0x80 >> col)) ? fg_be : bg_be;
+            /* 扩展为 scale×scale 方块 */
+            int px = x + col * scale;
+            int py = y + row * scale;
+            for (int sy = 0; sy < scale; sy++) {
+                for (int sx = 0; sx < scale; sx++) {
+                    s_fb[(py + sy) * LCD_UI_WIDTH + (px + sx)] = pixel;
+                }
+            }
+        }
+    }
+}
+
+void lcd_ui_draw_string_scaled(int x, int y, const char *str, int scale,
+                               uint16_t fg, uint16_t bg) {
+    if (s_fb == NULL || str == NULL) return;
+    if (scale < 1) scale = 1;
+    if (scale > 4) scale = 4;
+
+    int char_w = 8 * scale;
+    int cur_x = x;
+
+    while (*str) {
+        if (cur_x + char_w > LCD_UI_WIDTH) break;
+        lcd_ui_draw_char_scaled(cur_x, y, *str, scale, fg, bg);
+        cur_x += char_w;
+        str++;
+    }
+}
+
+void lcd_ui_center_text_scaled(int y, const char *str, int scale,
+                               uint16_t fg, uint16_t bg) {
+    if (s_fb == NULL || str == NULL) return;
+    if (scale < 1) scale = 1;
+    if (scale > 4) scale = 4;
+
+    int len = (int)strlen(str);
+    int char_w = 8 * scale;
+    int text_width = len * char_w;
+    int x = (LCD_UI_WIDTH - text_width) / 2;
+    if (x < 0) x = 0;
+    lcd_ui_draw_string_scaled(x, y, str, scale, fg, bg);
+}
+
+void lcd_ui_draw_wifi_icon(int x, int y, int size, int signal_level) {
+    if (s_fb == NULL) return;
+
+    /* 颜色：按信号强度 */
+    uint16_t active_color;
+    uint16_t inactive_color = host_to_be(0x4208); /* 深灰 */
+
+    switch (signal_level) {
+    case 0: active_color = host_to_be(0x8410); break; /* 灰 */
+    case 1: active_color = host_to_be(0xF800); break; /* 红 */
+    case 2: active_color = host_to_be(0xFFE0); break; /* 黄 */
+    case 3: active_color = host_to_be(0x07E0); break; /* 绿 */
+    default: active_color = host_to_be(0x8410); break;
+    }
+
+    /* 图标布局：底部圆点 + 上方 3 条弧线，居中于 size×size 区域 */
+    int cx = x + size / 2;
+
+    /* 三点圆点（3×3），作为信号源 */
+    int dot_sz = (size >= 16) ? 3 : 2;
+    if (signal_level > 0) {
+        for (int dy = 0; dy < dot_sz; dy++) {
+            for (int dx = 0; dx < dot_sz; dx++) {
+                int px = cx - dot_sz/2 + dx;
+                int py = y + size - dot_sz - 1 + dy;
+                if (px >= 0 && px < LCD_UI_WIDTH && py >= 0 && py < LCD_UI_HEIGHT) {
+                    s_fb[py * LCD_UI_WIDTH + px] = active_color;
+                }
+            }
+        }
+    } else {
+        for (int dy = 0; dy < dot_sz; dy++) {
+            for (int dx = 0; dx < dot_sz; dx++) {
+                int px = cx - dot_sz/2 + dx;
+                int py = y + size - dot_sz - 1 + dy;
+                if (px >= 0 && px < LCD_UI_WIDTH && py >= 0 && py < LCD_UI_HEIGHT) {
+                    s_fb[py * LCD_UI_WIDTH + px] = inactive_color;
+                }
+            }
+        }
+    }
+
+    /* 三条弧线（横向色块），从下往上宽度递增 */
+    int arc_h = (size >= 16) ? 4 : 2;
+    int gap   = (size >= 16) ? 3 : 1;
+    int base_y = y + size - dot_sz - 2;
+
+    int widths[3];
+    if (size >= 16) {
+        widths[0] = size / 3;       /* 最下层，最窄 */
+        widths[1] = size * 2 / 3;   /* 中层 */
+        widths[2] = size;            /* 最上层，最宽 */
+    } else {
+        widths[0] = size / 3;
+        widths[1] = size * 2 / 3;
+        widths[2] = size;
+    }
+    if (widths[0] < 4) widths[0] = 4;
+    if (widths[1] < 6) widths[1] = 6;
+    if (widths[2] < 8) widths[2] = 8;
+
+    for (int arc = 0; arc < 3; arc++) {
+        uint16_t col = (arc < signal_level) ? active_color : inactive_color;
+        int arc_y = base_y - (arc + 1) * (arc_h + gap);
+        int arc_w = widths[arc];
+        int arc_x = cx - arc_w / 2;
+
+        /* 裁剪 + 绘制 */
+        int ax = arc_x, ay = arc_y, aw = arc_w, ah = arc_h;
+        if (ax < 0) { aw += ax; ax = 0; }
+        if (ay < 0) { ah += ay; ay = 0; }
+        if (ax + aw > LCD_UI_WIDTH)  aw = LCD_UI_WIDTH - ax;
+        if (ay + ah > LCD_UI_HEIGHT) ah = LCD_UI_HEIGHT - ay;
+        if (aw <= 0 || ah <= 0) continue;
+
+        for (int row = ay; row < ay + ah; row++) {
+            for (int col_px = ax; col_px < ax + aw; col_px++) {
+                s_fb[row * LCD_UI_WIDTH + col_px] = col;
+            }
+        }
+    }
+}
+
+void lcd_ui_draw_rounded_rect(int x, int y, int w, int h, int r, uint16_t color) {
+    if (s_fb == NULL) return;
+    if (r <= 0) {
+        lcd_ui_draw_rect(x, y, w, h, color);
+        return;
+    }
+
+    /* 裁剪 */
+    int x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > LCD_UI_WIDTH)  x1 = LCD_UI_WIDTH;
+    if (y1 > LCD_UI_HEIGHT) y1 = LCD_UI_HEIGHT;
+    if (x0 >= x1 || y0 >= y1) return;
+
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+
+    uint16_t be = host_to_be(color);
+
+    for (int row = y0; row < y1; row++) {
+        for (int col = x0; col < x1; col++) {
+            /* 判断是否在圆角矩形内 */
+            int inside = 1;
+
+            /* 左上角 */
+            if (col < x + r && row < y + r) {
+                int dx = (x + r) - col;
+                int dy = (y + r) - row;
+                if (dx * dx + dy * dy > r * r) inside = 0;
+            }
+            /* 右上角 */
+            else if (col >= x + w - r && row < y + r) {
+                int dx = col - (x + w - r - 1);
+                int dy = (y + r) - row;
+                if (dx * dx + dy * dy > r * r) inside = 0;
+            }
+            /* 左下角 */
+            else if (col < x + r && row >= y + h - r) {
+                int dx = (x + r) - col;
+                int dy = row - (y + h - r - 1);
+                if (dx * dx + dy * dy > r * r) inside = 0;
+            }
+            /* 右下角 */
+            else if (col >= x + w - r && row >= y + h - r) {
+                int dx = col - (x + w - r - 1);
+                int dy = row - (y + h - r - 1);
+                if (dx * dx + dy * dy > r * r) inside = 0;
+            }
+
+            if (inside) {
+                s_fb[row * LCD_UI_WIDTH + col] = be;
+            }
+        }
+    }
 }

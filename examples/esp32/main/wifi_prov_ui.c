@@ -1,12 +1,11 @@
 /**
  * @file wifi_prov_ui.c
- * @brief WiFi 配网 UI 状态机 — 实现
+ * @brief WiFi 配网 UI 状态机 — 实现（深色主题 + 大字号 + 图标 + 动画）
  *
  * 在 ST7789 320×240 屏幕上显示配网过程，使用非阻塞轮询：
- *   - 初始化 LCD UI 和 WiFi 配网
- *   - AP 模式：显示热点 SSID + URL + 操作提示
- *   - 轮询连接状态（每 500ms）
- *   - 连接成功：显示已连接、WiFi SSID、IP 地址
+ *   - AP 模式：大标题 "WiFi Setup" + WiFi 图标 + 卡片信息
+ *   - 连接中：大标题 "Connecting" + 动画点 + 目标 SSID 卡片
+ *   - 连接成功：大标题 "Connected" + 绿色图标 + 网络信息卡片
  */
 
 #include "wifi_prov_ui.h"
@@ -22,149 +21,159 @@
 
 static const char *TAG = "wifi_prov_ui";
 
-/* ---- 颜色定义（RGB565） ---- */
-#define COLOR_BLACK       0x0000
-#define COLOR_WHITE       0xFFFF
-#define COLOR_DARK_BG     0x18E3   /* 深蓝灰背景 */
-#define COLOR_GREEN_BG    0x0665   /* 深绿背景 */
-#define COLOR_TITLE_BG    0x39E7   /* 标题栏蓝 */
-#define COLOR_ACCENT       0x07FF   /* 青色强调 */
-#define COLOR_GRAY         0x8410   /* 灰色次要文字 */
-#define COLOR_YELLOW       0xFFE0   /* 黄色提示 */
+/* ---- 颜色定义（RGB565，深色主题） ---- */
+#define COLOR_BG         0x0000   /* 纯黑背景 */
+#define COLOR_WHITE      0xFFFF   /* 主文字 */
+#define COLOR_CYAN       0x07FF   /* 青色强调 */
+#define COLOR_GREEN      0x07E0   /* 成功色 */
+#define COLOR_YELLOW     0xFFE0   /* 警告/提示色 */
+#define COLOR_GRAY       0x8410   /* 次要文字 */
+#define COLOR_CARD_BG    0x18E3   /* 深灰蓝卡片背景 */
 
 /* ---- 布局常量 ---- */
-#define TITLE_Y         8
-#define STATUS_Y        40
-#define SSID_LABEL_Y    80
-#define SSID_VALUE_Y    100
-#define URL_LABEL_Y     130
-#define URL_VALUE_Y     150
-#define HINT_Y          210
-
-/* 画标题栏 */
-static void draw_title_bar(const char *title) {
-    lcd_ui_draw_rect(0, 0, 320, 32, COLOR_TITLE_BG);
-    lcd_ui_center_text(TITLE_Y, title, COLOR_WHITE, COLOR_TITLE_BG);
-}
-
-/* 画分割线 */
-static void draw_separator(int y) {
-    lcd_ui_draw_rect(0, y, 320, 2, COLOR_ACCENT);
-}
+#define TITLE_Y          16
+#define ICON_Y           60
+#define STATUS_Y         110
+#define CARD_X           20
+#define CARD_Y           138
+#define CARD_W           (LCD_UI_WIDTH - 40)
+#define CARD_H           72
+#define CARD_R           8
+#define CARD_PAD         8
+#define CARD_LINE1_Y     (CARD_Y + CARD_PAD + 12)
+#define CARD_LINE2_Y     (CARD_LINE1_Y + 24)
+#define HINT_Y           222
 
 /* ===================================================================
- *  AP 配网画面
+ *  画面 1 — AP 配网模式
  * =================================================================== */
 static void draw_ap_screen(const char *ap_ssid, const char *url) {
-    lcd_ui_clear(COLOR_DARK_BG);
+    lcd_ui_clear(COLOR_BG);
 
-    draw_title_bar("WiFi 配网");
+    /* 标题：2x "WiFi Setup" */
+    lcd_ui_center_text_scaled(TITLE_Y, "WiFi Setup", 2, COLOR_WHITE, COLOR_BG);
 
-    /* 状态提示 */
-    lcd_ui_center_text(STATUS_Y, "等待配网...", COLOR_YELLOW, COLOR_DARK_BG);
+    /* WiFi 图标：灰色，level=1 */
+    lcd_ui_draw_wifi_icon(144, ICON_Y, 32, 1);
 
-    /* 分割线 */
-    draw_separator(68);
+    /* 状态：1x 黄色 "AP Mode" */
+    lcd_ui_center_text(STATUS_Y, "AP Mode", COLOR_YELLOW, COLOR_BG);
 
-    /* AP SSID */
-    lcd_ui_draw_string(16, SSID_LABEL_Y, "热点名称:", COLOR_GRAY, COLOR_DARK_BG);
-    lcd_ui_draw_string(16, SSID_VALUE_Y, ap_ssid ? ap_ssid : "N/A",
-                       COLOR_WHITE, COLOR_DARK_BG);
+    /* SSID 大字居中 */
+    lcd_ui_center_text_scaled(CARD_Y + 8, ap_ssid ? ap_ssid : "N/A",
+                              2, COLOR_WHITE, COLOR_BG);
 
-    /* URL */
-    lcd_ui_draw_string(16, URL_LABEL_Y, "配置地址:", COLOR_GRAY, COLOR_DARK_BG);
-    lcd_ui_draw_string(16, URL_VALUE_Y, url ? url : "192.168.4.1",
-                       COLOR_ACCENT, COLOR_DARK_BG);
+    /* URL 居中 */
+    lcd_ui_center_text(CARD_Y + 48, url ? url : "192.168.4.1",
+                       COLOR_CYAN, COLOR_BG);
 
     /* 底部提示 */
-    lcd_ui_center_text(HINT_Y, "请用手机连接以上热点",
-                       COLOR_WHITE, COLOR_DARK_BG);
-    lcd_ui_center_text(HINT_Y + 18, "打开浏览器访问配置地址",
-                       COLOR_GRAY, COLOR_DARK_BG);
+    lcd_ui_center_text(HINT_Y, "Connect phone to hotspot",
+                       COLOR_GRAY, COLOR_BG);
+    lcd_ui_center_text(HINT_Y + 16, "Open browser -> config page",
+                       COLOR_GRAY, COLOR_BG);
 }
 
 /* ===================================================================
- *  连接画面（正在连接目标 SSID）
+ *  画面 2 — 连接中（含动画点）
  * =================================================================== */
-static void draw_connecting_screen(const char *target_ssid) {
-    lcd_ui_clear(COLOR_DARK_BG);
+static void draw_connecting_screen(const char *target_ssid, int dot_count) {
+    lcd_ui_clear(COLOR_BG);
 
-    draw_title_bar("WiFi 连接中");
+    /* 标题：2x "Connecting" */
+    lcd_ui_center_text_scaled(TITLE_Y, "Connecting", 2, COLOR_WHITE, COLOR_BG);
 
-    lcd_ui_center_text(STATUS_Y, "正在连接...", COLOR_YELLOW, COLOR_DARK_BG);
+    /* WiFi 图标：黄色，level=2 */
+    lcd_ui_draw_wifi_icon(144, ICON_Y, 32, 2);
 
-    draw_separator(68);
+    /* 状态：白色 "connecting" + 动画点 */
+    char status_str[32];
+    snprintf(status_str, sizeof(status_str), "connecting%.*s", dot_count, "....");
+    lcd_ui_center_text(STATUS_Y, status_str, COLOR_WHITE, COLOR_BG);
 
-    lcd_ui_draw_string(16, SSID_LABEL_Y, "目标网络:", COLOR_GRAY, COLOR_DARK_BG);
-    lcd_ui_draw_string(16, SSID_VALUE_Y, target_ssid ? target_ssid : "N/A",
-                       COLOR_WHITE, COLOR_DARK_BG);
-
-    lcd_ui_center_text(HINT_Y, "请稍候...", COLOR_GRAY, COLOR_DARK_BG);
+    /* SSID 大字居中显示，无卡片背景 */
+    lcd_ui_center_text_scaled(CARD_Y + 16, target_ssid ? target_ssid : "...",
+                              2, COLOR_CYAN, COLOR_BG);
 }
 
 /* ===================================================================
- *  连接成功画面
+ *  画面 3 — 连接成功
  * =================================================================== */
 static void draw_connected_screen(const char *ssid, const char *ip) {
-    lcd_ui_clear(COLOR_GREEN_BG);
+    lcd_ui_clear(COLOR_BG);
 
-    draw_title_bar("连接成功");
+    /* 标题：2x "Connected" */
+    lcd_ui_center_text_scaled(TITLE_Y, "Connected", 2, COLOR_WHITE, COLOR_BG);
 
-    /* 大号状态 */
-    lcd_ui_center_text(STATUS_Y, "已连接", COLOR_WHITE, COLOR_GREEN_BG);
+    /* WiFi 图标：绿色，level=3 */
+    lcd_ui_draw_wifi_icon(144, ICON_Y, 32, 3);
 
-    draw_separator(68);
+    /* 状态：绿色 "Success" */
+    lcd_ui_center_text(STATUS_Y, "Success", COLOR_GREEN, COLOR_BG);
 
-    /* WiFi SSID */
-    lcd_ui_draw_string(16, SSID_LABEL_Y, "WiFi:", COLOR_WHITE, COLOR_GREEN_BG);
-    lcd_ui_draw_string(16, SSID_VALUE_Y, ssid ? ssid : "N/A",
-                       COLOR_WHITE, COLOR_GREEN_BG);
+    /* WiFi 名大字居中 */
+    lcd_ui_center_text_scaled(CARD_Y + 8, ssid ? ssid : "N/A",
+                              2, COLOR_WHITE, COLOR_BG);
 
-    /* IP 地址 */
-    lcd_ui_draw_string(16, URL_LABEL_Y, "IP 地址:", COLOR_WHITE, COLOR_GREEN_BG);
-    lcd_ui_draw_string(16, URL_VALUE_Y, ip ? ip : "0.0.0.0",
-                       COLOR_ACCENT, COLOR_GREEN_BG);
+    /* IP 居中 */
+    lcd_ui_center_text(CARD_Y + 48, ip ? ip : "0.0.0.0",
+                       COLOR_CYAN, COLOR_BG);
+
+    /* 底部 */
+    lcd_ui_center_text(HINT_Y, "Enjoy your WiFi!",
+                       COLOR_GRAY, COLOR_BG);
 }
 
 /* ===================================================================
  *  主入口：完整配网流程
  * =================================================================== */
 void wifi_prov_ui_run(void) {
-    ESP_LOGI(TAG, "Starting WiFi provisioning UI");
+    ESP_LOGI(TAG, "Starting WiFi provisioning UI (dark theme)");
 
-    /* 1. 初始化 LCD UI（必须在 WiFi 初始化前，确保 framebuffer 就绪） */
+    /* 1. 初始化 LCD UI */
     lcd_ui_init();
+
+    // 启动画面
+    lcd_ui_clear(0x0000);
+    lcd_ui_center_text_scaled(80, "AI Agent", 2, 0xFFFF, 0x0000);
+    lcd_ui_draw_rect(60, 118, 200, 2, 0x07FF);   // 青色横线
+    lcd_ui_center_text(140, "Starting...", 0x8410, 0x0000);
+    lcd_ui_flush();
+    vTaskDelay(pdMS_TO_TICKS(800));
 
     /* 2. 初始化 WiFi 配网 */
     if (wifi_prov_init() != 0) {
         ESP_LOGE(TAG, "WiFi provisioning init failed");
 
         /* 错误画面 */
-        lcd_ui_clear(0xF800);  /* 红色背景 */
-        lcd_ui_center_text(100, "WiFi 初始化失败", COLOR_WHITE, 0xF800);
+        lcd_ui_clear(0xF800);
+        lcd_ui_center_text(100, "WiFi Init Failed", COLOR_WHITE, 0xF800);
         lcd_ui_flush();
         return;
     }
 
-    /* 3. 判断当前模式并进入主轮询 */
+    /* 3. 动画帧计数器（静态，跨轮询保持） */
+    static int anim_frame = 0;
+
+    /* 4. 判断当前模式并进入主轮询 */
     bool ap_mode = wifi_prov_is_ap_mode();
+    anim_frame = 0;
 
     if (ap_mode) {
         const char *ap_ssid = wifi_prov_get_ap_ssid();
         ESP_LOGI(TAG, "AP mode active, SSID: %s", ap_ssid);
         draw_ap_screen(ap_ssid, "192.168.4.1");
     } else {
-        /* Station 模式，显示连接中画面 */
         const char *ssid = wifi_prov_get_ssid();
         ESP_LOGI(TAG, "Station mode, connecting...");
-        draw_connecting_screen(strlen(ssid) > 0 ? ssid : "...");
+        draw_connecting_screen(strlen(ssid) > 0 ? ssid : "...", 0);
     }
     lcd_ui_flush();
 
-    /* 4. 非阻塞轮询 */
-    int prev_ret = 1; /* 上一个状态 */
+    /* 5. 非阻塞轮询 */
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(500));
+        anim_frame++;
 
         int ret = wifi_prov_wait_connected_timeout(0);
 
@@ -184,30 +193,37 @@ void wifi_prov_ui_run(void) {
         }
 
         if (ret == -1) {
-            /* 错误 */
             ESP_LOGE(TAG, "WiFi provisioning error");
             lcd_ui_clear(0xF800);
-            lcd_ui_center_text(100, "WiFi 连接错误", COLOR_WHITE, 0xF800);
+            lcd_ui_center_text(100, "WiFi Connect Error", COLOR_WHITE, 0xF800);
             lcd_ui_flush();
             return;
         }
 
-        /* ret == 1: 仍在等待 / 超时 → 刷新画面以更新任何变化 */
+        /* ret == 1: 仍在等待 */
 
-        /* 检查 AP 模式是否已切换 */
+        /* 检查 AP 模式是否切换 */
         bool now_ap = wifi_prov_is_ap_mode();
         if (now_ap != ap_mode) {
             ap_mode = now_ap;
+            anim_frame = 0; /* 切画面重置动画帧 */
             if (ap_mode) {
                 const char *ap_ssid = wifi_prov_get_ap_ssid();
                 draw_ap_screen(ap_ssid, "192.168.4.1");
             } else {
                 const char *ssid = wifi_prov_get_ssid();
-                draw_connecting_screen(strlen(ssid) > 0 ? ssid : "...");
+                draw_connecting_screen(strlen(ssid) > 0 ? ssid : "...", 0);
             }
             lcd_ui_flush();
+            continue;
         }
 
-        prev_ret = ret;
+        /* 连接中画面的动画刷新 */
+        if (!ap_mode) {
+            const char *ssid = wifi_prov_get_ssid();
+            int dots = anim_frame % 4;
+            draw_connecting_screen(strlen(ssid) > 0 ? ssid : "...", dots);
+            lcd_ui_flush();
+        }
     }
 }

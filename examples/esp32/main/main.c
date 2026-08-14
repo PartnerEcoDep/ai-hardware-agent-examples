@@ -399,7 +399,6 @@ void app_main(void) {
     lcd_fill(0x0000);                                      /* 先填黑 */
     esp_lcd_panel_disp_on_off(g_lcd_panel, true);          /* 再开显示 */
     backlight_init();
-    lcd_diagnostic();                                       /* 四色诊断图 */
     printf("[5/8] LCD OK\n"); fflush(stdout);
 
     /* Audio */
