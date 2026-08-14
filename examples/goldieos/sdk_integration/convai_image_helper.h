@@ -22,9 +22,7 @@ typedef struct convai_image_state_s {
     int64_t                listening_end_time;
 } convai_image_state_t;
 
-#ifndef PLATFORM_TYPE_WS63
 extern const char* CONVAI_IMAGE_DEFAULT_PATH;
-#endif
 
 int convai_image_init(convai_image_context_t* ctx, const char* file_path);
 void convai_image_cleanup(convai_image_context_t* ctx);

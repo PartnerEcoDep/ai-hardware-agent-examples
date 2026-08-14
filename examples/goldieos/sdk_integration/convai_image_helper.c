@@ -26,21 +26,18 @@ static void get_time_string(char* buf, size_t buf_size) {
              st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 }
 #else
-static uint64_t get_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+static uint64_t get_time_ms(void)
+{
+    return 0;
 }
 
-static void get_time_string(char* buf, size_t buf_size) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    struct tm* tm_info = localtime(&ts.tv_sec);
-    int ms = ts.tv_nsec / 1000000;
-    strftime(buf, buf_size, "%Y-%m-%d %H:%M:%S", tm_info);
-    size_t len = strlen(buf);
-    snprintf(buf + len, buf_size - len, ".%03d", ms);
+static void get_time_string(char* buf, size_t buf_size)
+{
+    if (buf != NULL && buf_size > 0) {
+        buf[0] = '\0';
+    }
 }
+
 #endif
 
 #ifndef PLATFORM_TYPE_WS63
