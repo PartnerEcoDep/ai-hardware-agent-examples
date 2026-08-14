@@ -10,6 +10,7 @@
  */
 
 #include "ai_chat_ui_internal.h"
+#include "convai_bridge.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -230,6 +231,12 @@ esp_err_t ai_chat_ui_init(void) {
   s_state = CHAT_IDLE;
 
   lvgl_port_unlock();
+
+  /* Subscribe to SDK cloud events to drive the top-bar indicator.
+   * Done outside the LVGL lock — convai_bridge_on_event is just a
+   * pointer store. */
+  convai_bridge_on_event(ai_chat_ui_on_cloud_event);
+
   ESP_LOGI(TAG, "UI ready");
   return ESP_OK;
 }
@@ -336,6 +343,37 @@ void ai_chat_ui_set_connection(const char *ssid, const char *ip, bool online) {
   (void)ssid;
   (void)ip;
   ai_chat_ui_set_network(online);
+}
+
+/* convai_bridge_on_event callback — drives the top-bar cloud indicator.
+ * Mirrors goldieos' cloud_event_callback() pattern. */
+void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info) {
+  (void)info;
+  switch (code) {
+    case CONVAI_EV_CONNECTED:
+      ai_chat_ui_set_cloud(true);
+      break;
+    case CONVAI_EV_DISCONNECTED:
+    case CONVAI_EV_FAILED:
+      ai_chat_ui_set_cloud(false);
+      break;
+    case CONVAI_EV_UPDATED:
+    default:
+      break;
+  }
+}
+
+/* Cloud-side indicator (top-left dot + label), driven by SDK on_convai_event.
+ * English labels per project convention. */
+void ai_chat_ui_set_cloud(bool connected) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+    ESP_LOGE(TAG, "set_cloud: failed to acquire LVGL lock");
+    return;
+  }
+  lv_label_set_text(ui.status_label, connected ? "\xE2\x97\x8F Online"
+                                               : "\xE2\x97\x8F Offline");
+  lv_obj_set_style_bg_color(ui.status_dot, connected ? C_GREEN : C_TEXT_GRAY, 0);
+  lvgl_port_unlock();
 }
 
 void ai_chat_ui_update_volume(uint8_t level) {

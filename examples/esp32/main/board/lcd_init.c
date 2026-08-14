@@ -34,13 +34,20 @@ esp_err_t lcd_init(void) {
   };
   ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
 
-  /* Panel IO (CS is driven by PCA9557, not a direct GPIO). */
+  /* Panel IO (CS is driven by PCA9557, not a direct GPIO).
+   * trans_queue_depth=3: each pending tx pre-allocates a DMA-capable
+   * "priv" buffer of max_transfer_sz bytes. With max=25.6KB, the previous
+   * depth=10 reserved 256KB of DMA pool, exceeding the bus's per-instance
+   * budget and producing spicommon_dma_setup_priv_buffer(430) failures on
+   * every LVGL flush. Depth 3 keeps in-flight ~75KB; ST7789 driver
+   * internally splits full-frame bitmaps into many small transactions
+   * (each <= max_transfer_sz) which is depth-tolerant. */
   esp_lcd_panel_io_spi_config_t io_cfg = {
       .cs_gpio_num = GPIO_NUM_NC,
       .dc_gpio_num = LCD_DC_PIN,
       .spi_mode = LCD_SPI_MODE,
       .pclk_hz = LCD_PIXEL_CLOCK_HZ,
-      .trans_queue_depth = 10,
+      .trans_queue_depth = 3,
       .lcd_cmd_bits = 8,
       .lcd_param_bits = 8,
   };

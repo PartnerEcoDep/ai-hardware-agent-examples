@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief LCKFB ESP32-S3 — AI Hardware Agent entry point.
+ * @brief LCKFB ESP32-S3 鈥?AI Hardware Agent entry point.
  *
  * Boot sequence (delegated to focused modules):
  *   1. GPIO / status LED
@@ -26,6 +26,7 @@
 #include "lcd_init.h"
 #include "lcd_boot_diag.h"
 #include "audio_init.h"
+#include "audio_codec_lckfb.h"  /* audio_lckfb_test_tone */
 #include "sntp_init.h"
 #include "sdk_init.h"
 #include "button_handler.h"
@@ -111,13 +112,13 @@ void app_main(void) {
   printf("AI Chat UI ready (IDLE)\n");
   fflush(stdout);
 
-  /* 8. Platform HAL + SDK session */
-  printf("[8/8] HAL register + SDK...\n");
+  /* 8. Platform HAL + SDK engine (no session start until BOOT long-press) */
+  printf("[8/8] HAL register + SDK engine...\n");
   fflush(stdout);
   if (sdk_init() != ESP_OK) {
     printf("[8/8] SDK init FAILED\n");
   } else {
-    printf("[8/8] SDK started\n");
+    printf("[8/8] SDK engine ready (idle, awaiting BOOT long-press)\n");
   }
   fflush(stdout);
 
@@ -127,6 +128,16 @@ skip_hw:
   button_handler_init();
   printf("\n=== Init complete, press BOOT to start AI conversation ===\n");
   board_led_set(0);
+
+  /* 婊寸瓟澹版祴璇? SDK 寮曟搸灏辩华鍚庢挱涓€娈?1kHz/300ms 鏂规尝, 楠岃瘉 TX 鐗╃悊閾捐矾
+   * (I2S TX DMA + ES8311 + 鍔熸斁 NS4150B + 鍠囧彮)銆?
+   * 鍚埌 "鍝? 鈫?鍠囧彮/PA/ES8311 璺緞姝ｅ父, 鍚庣画鏃犲０闂閮藉湪 RX / 杞欢灞傘€?
+   * 鍚笉鍒?鈫?妫€鏌?ES8311 瀵勫瓨鍣?/ 鍔熸斁浣胯兘 / 鍠囧彮纭欢銆?*/
+  printf("\n[test] playing 1kHz tone (1500ms) at MAX volume for speaker sanity check...\n");
+  fflush(stdout);
+  audio_lckfb_test_tone(1000, 1500);
+  printf("[test] tone done\n");
+  fflush(stdout);
 
   static int s_hb_cnt = 0;
   while (1) {

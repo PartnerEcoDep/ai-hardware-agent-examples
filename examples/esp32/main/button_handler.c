@@ -2,24 +2,29 @@
  * @file button_handler.c
  * @brief BOOT-button polling state machine.
  *
- * Pulled out of the former monolithic main.c. Maintains the press/release
- * edge detection and maps a short press to chat-state transitions.
+ * Pulled out of the former monolithic main.c. Maintains press/release
+ * edge detection. A short press toggles the SDK cloud session
+ * (convai_bridge_start / stop) — this is the single user-facing control
+ * for AI conversation on/off, matching the goldieos CheckboxView_cloudsw.
+ *
+ * The chat UI state (IDLE / LISTENING / THINKING / SPEAKING) is driven
+ * entirely by the SDK's on_conversation_status callback (see
+ * convai_bridge.c:on_status) — this file does NOT poke UI state, the
+ * way goldieos' cloud_status_callback does the same.
  */
 
 #include "button_handler.h"
 #include "board_lckfb_szpi.h"
-#include "ai_chat_ui.h"
+#include "convai_bridge.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "button";
 
-#define LONG_PRESS_MS  1500  /* long-press threshold */
 #define SHORT_MIN_MS   50    /* debounce for a valid short press */
 
 static bool s_btn_was_down = false;
-static bool s_long_press_fired = false;
 static TickType_t s_btn_press_tick = 0;
 
 static bool button_is_down(void) {
@@ -41,28 +46,19 @@ void button_handler_poll(void) {
   TickType_t now = xTaskGetTickCount();
 
   if (down && !s_btn_was_down) {
-    /* Press edge: record timestamp, arm long-press detection. */
+    /* Press edge: record timestamp for debounce. */
     s_btn_press_tick = now;
-    s_long_press_fired = false;
-  } else if (down && s_btn_was_down) {
-    /* Still down: fire long-press once threshold reached. */
-    if (!s_long_press_fired &&
-        (now - s_btn_press_tick) * portTICK_PERIOD_MS >= LONG_PRESS_MS) {
-      s_long_press_fired = true;
-    }
   } else if (!down && s_btn_was_down) {
-    /* Release edge: treat as short press if not a long press. */
-    if (!s_long_press_fired &&
-        (now - s_btn_press_tick) * portTICK_PERIOD_MS >= SHORT_MIN_MS) {
-      chat_state_t cur = ai_chat_ui_get_state();
-      if (cur == STATE_IDLE) {
-        ESP_LOGI(TAG, "Short press -> start conversation");
-        ai_chat_ui_set_state(STATE_LISTENING);
-      } else if (cur == STATE_LISTENING) {
-        ESP_LOGI(TAG, "Short press -> cancel");
-        ai_chat_ui_set_state(STATE_IDLE);
-      } else if (cur == STATE_VOICE_SELECT) {
-        /* Physical short press no longer drives the voice panel. */
+    /* Release edge: short press -> toggle the SDK session. */
+    if ((now - s_btn_press_tick) * portTICK_PERIOD_MS >= SHORT_MIN_MS) {
+      if (convai_bridge_is_started()) {
+        ESP_LOGI(TAG, "Press -> convai_bridge_stop");
+        convai_bridge_stop();
+      } else {
+        ESP_LOGI(TAG, "Press -> convai_bridge_start");
+        if (convai_bridge_start() != CONVAI_OK) {
+          ESP_LOGE(TAG, "convai_bridge_start failed");
+        }
       }
     }
   }

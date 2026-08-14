@@ -26,16 +26,23 @@ extern esp_lcd_panel_handle_t g_lcd_panel;
 static const char *TAG = "lvgl_port";
 
 /* ===================================================================
- *  帧缓冲 — PSRAM 双缓冲, PARTIAL 模式
+ *  帧缓冲 — 内部 SRAM 双缓冲, PARTIAL 模式
  *
- *  ESP32-S3 PSRAM 支持 GDMA 直接访问，加 MALLOC_CAP_DMA 标记。
- *  双缓冲 + PARTIAL: LVGL 渲染一块时 DMA 发送上一块。
- *  缓冲 40 行（~25KB ×2），省 PSRAM 且保证刷新流畅。
+ *  之前用整帧 FULL 缓冲（153600B）放 PSRAM（MALLOC_CAP_SPIRAM|DMA），
+ *  每次 flush 被 ST7789 按 max_transfer_sz 切多段，SPI 驱动判定 PSRAM
+ *  源缓冲不可直接 DMA，逐段从内部 RAM 现分配私有缓冲
+ *  （spicommon_dma_setup_priv_buffer）。动画密集（AI speaking 多个圆
+ *  同时脉动）时刷新频率飙高，内部 RAM DMA 池被耗尽 → "Failed to
+ *  allocate priv TX buffer"，LCD 刷新失败。
+ *
+ *  改为 PARTIAL + 内部 SRAM DMA 双缓冲（40 行 ≈ 25.6KB ×2，正好等于
+ *  SPI max_transfer_sz，单段传输），源缓冲在内部 RAM 可被 GDMA 直接
+ *  访问，无需逐段私有缓冲拷贝，从根本上消除该错误。
  * =================================================================== */
 #define LCD_H_RES  320
 #define LCD_V_RES  240
-#define BUF_LINES  LCD_V_RES  /* full-frame buffer: one flush per frame */
-#define BUF_SIZE   (LCD_H_RES * BUF_LINES * sizeof(lv_color_t))  /* 153600 bytes */
+#define BUF_LINES  40           /* PARTIAL: 每次渲染 40 行 (== SPI max_transfer_sz 的段高) */
+#define BUF_SIZE   (LCD_H_RES * BUF_LINES * sizeof(lv_color_t))  /* 25600 bytes */
 
 static lv_color_t *s_buf1 = NULL;
 static lv_color_t *s_buf2 = NULL;
@@ -130,13 +137,17 @@ int lvgl_port_init(void)
     /* 1. LVGL 核心初始化 */
     lv_init();
 
-    /* 2. PSRAM 分配双帧缓冲 (DMA 可访问) */
+    /* 2. 内部 SRAM 分配双缓冲 (DMA 可访问)。
+     *    必须用内部 RAM (MALLOC_CAP_DMA|MALLOC_CAP_INTERNAL)，不要用 PSRAM：
+     *    S3 上 PSRAM buffer 会被 SPI 驱动判为不可直接 DMA，退回私有缓冲拷贝路径，
+     *    动画密集时耗尽内部 RAM DMA 池。40 行 × 2 = 51.2KB，落在
+     *    SPIRAM_MALLOC_RESERVE_INTERNAL(96KB) 内，可稳定分配。 */
     s_buf1 = (lv_color_t *)heap_caps_malloc(BUF_SIZE,
-                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+                                             MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     s_buf2 = (lv_color_t *)heap_caps_malloc(BUF_SIZE,
-                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+                                             MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_buf1 || !s_buf2) {
-        ESP_LOGE(TAG, "Failed to allocate PSRAM DMA buffer(s)");
+        ESP_LOGE(TAG, "Failed to allocate internal SRAM DMA buffer(s)");
         return -1;
     }
     memset(s_buf1, 0, BUF_SIZE);
@@ -146,7 +157,7 @@ int lvgl_port_init(void)
     lv_display_t *disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     lv_display_set_flush_cb(disp, disp_flush_cb);
     lv_display_set_buffers(disp, s_buf1, s_buf2, BUF_SIZE,
-                           LV_DISPLAY_RENDER_MODE_FULL);
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     /* 4. Tick 定时器 — 1ms */
     const esp_timer_create_args_t timer_args = {

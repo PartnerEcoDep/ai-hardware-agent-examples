@@ -22,13 +22,11 @@ extern "C" {
 
 /**
  * @brief 音频句柄
+ *
+ * 不透明结构, 字段全部在 audio_codec_lckfb.c 内定义.
+ * 外部代码不能直接访问字段, 只能通过 audio_lckfb_*() 函数操作。
  */
-typedef struct {
-    i2c_master_dev_handle_t es8311_dev;  /* ES8311 I2C 设备 */
-    i2c_master_dev_handle_t es7210_dev;  /* ES7210 I2C 设备 */
-    i2s_chan_handle_t       tx_chan;     /* I2S TX (扬声器) */
-    i2s_chan_handle_t       rx_chan;     /* I2S RX (麦克风) */
-} audio_lckfb_t;
+typedef struct audio_lckfb_s audio_lckfb_t;
 
 /* 音频回调: 数据就绪时调用 */
 typedef int (*audio_playback_cb_t)(uint8_t *buf, size_t buf_size, size_t *filled);
@@ -87,6 +85,17 @@ int audio_lckfb_set_volume(audio_lckfb_t *audio, int vol);
  * @return 0 成功
  */
 int audio_lckfb_set_mic_gain(audio_lckfb_t *audio, int gain_db);
+
+/**
+ * @brief 滴答声测试 — 通过 I2S TX 写一段 1kHz 方波, 验证 TX 物理链路
+ *
+ * 调用前需要 audio_lckfb_init() 成功 (TX 通道已 enable)。
+ * 频率固定 1kHz, 时长默认 300ms, 立体声 L=R 同步输出。
+ *
+ * @param freq_hz     频率 (Hz), 100~4000
+ * @param duration_ms 时长 (ms), 50~2000
+ */
+void audio_lckfb_test_tone(int freq_hz, int duration_ms);
 
 /**
  * @brief 本板 codec 的抽象实例 (audio_codec_t 适配层)

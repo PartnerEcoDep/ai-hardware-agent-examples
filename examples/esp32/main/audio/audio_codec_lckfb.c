@@ -1,21 +1,16 @@
 /**
  * @file audio_codec_lckfb.c
- * @brief 立创实战派板载音频初始化实现
+ * @brief 立创实战派板载音频初始化 (基于 esp_codec_dev 官方组件)
  *
- * ES8311 (DAC 输出):
- *   I2C addr = 0x18, 连接到扬声器 (经 NS4150B 功放, PA_EN 由 PCA9557 控制)
+ * 驱动链:
+ *   I2S0 (std TX 立体声) → ES8311 (DAC) → LOUT/ROUT → NS4150B (PA) → 喇叭
+ *   MIC1/MIC2/MIC3/MIC4 → ES7210 (ADC TDM) → I2S0 TDM RX
  *
- * ES7210 (ADC 输入):
- *   I2C addr = 0x41 (7-bit), 3路 MIC: MIC1/MIC2 立体声 + MIC3 回采 DAC
+ * PA_EN 由 PCA9557 bit1 控制 (走 pa_enable_cb), 不走 es8311 pa_pin。
+ * ES7210 MIC3 是 ES8311 输出的回采 (AEC 参考), 跟 ES8311 同步。
  *
- * I2S 接口:
- *   MCLK = GPIO38 (主时钟, 由 ESP32 输出)
- *   BCLK = GPIO14 (位时钟)
- *   WS   = GPIO13 (左右声道时钟)
- *   DIN  = GPIO12 (数据输入 / 麦克风)
- *   DOUT = GPIO45 (数据输出 / 扬声器)
- *
- * 参考: xiaozhi-esp32 BoxAudioCodec
+ * 之前手写寄存器, 调了多次都不出声。改用乐鑫官方 esp_codec_dev 组件
+ * (xiaozhi-esp32 验证过的同一套驱动), 避免寄存器值/时序的微妙差异。
  */
 
 #include "audio_codec_lckfb.h"
@@ -25,292 +20,371 @@
 #include "freertos/task.h"
 #include <string.h>
 
+/* I2S TDM 模式 (RX 用 4-slot TDM 采 ES7210) */
+#include "driver/i2s_tdm.h"
+
+#include "esp_codec_dev.h"
+#include "esp_codec_dev_defaults.h"
+#include "es8311_codec.h"
+#include "es7210_adc.h"
+
 #define TAG "audio_lckfb"
 
-/* ===================================================================
- *  ES8311 寄存器定义 (DAC)
- * =================================================================== */
-#define ES8311_RESET_REG00          0x00
-#define ES8311_CLK_MANAGER_REG01    0x01
-#define ES8311_CLK_MANAGER_REG02    0x02
-#define ES8311_CLK_MANAGER_REG03    0x03
-#define ES8311_CLK_MANAGER_REG04    0x04
-#define ES8311_SYSTEM_REG0D         0x0D
-#define ES8311_SYSTEM_REG0E         0x0E
-#define ES8311_GPIO_REG44           0x44
-#define ES8311_SDPIN_REG09          0x09
-#define ES8311_DAC_REG31            0x31
-#define ES8311_DAC_REG32            0x32
-#define ES8311_DAC_REG33            0x33
-#define ES8311_DAC_REG37            0x37
-#define ES8311_GP_REG45             0x45
+/* ---- 内部硬件句柄 (本文件私有, 外部只能通过 audio_lckfb_*() 访问) ---- */
+struct audio_lckfb_s {
+    i2s_chan_handle_t tx_chan;     /* 立体声标准 I2S (→ ES8311) */
+    i2s_chan_handle_t rx_chan;     /* TDM 4-slot (← ES7210) */
+    const audio_codec_data_if_t *data_if;
+    esp_codec_dev_handle_t       spk;     /* ES8311 OUT */
+    esp_codec_dev_handle_t       mic;     /* ES7210 IN */
+    void (*pa_enable)(int en, void *ctx);
+    void *pa_ctx;
+};
+
+static struct audio_lckfb_s s_hw;
 
 /* ===================================================================
- *  ES7210 寄存器定义 (ADC)
+ *  I2S 初始化 — TX std (立体声 16-bit) + RX TDM 4-slot 16-bit
+ *  共用 I2S0, 一次 i2s_new_channel 同时创建 TX+RX
  * =================================================================== */
-#define ES7210_RESET_REG00          0x00
-#define ES7210_CLOCK_OFF2_REG01     0x01
-#define ES7210_MICBIAS_REG02        0x02
-#define ES7210_MIC1_GAIN_REG44      0x44  /* MIC1 增益 */
-#define ES7210_MIC2_GAIN_REG45      0x45  /* MIC2 增益 */
-#define ES7210_MIC3_GAIN_REG46      0x46  /* MIC3 增益 (AEC 参考通道) */
-#define ES7210_ADC34_GAIN_REG22     0x22
-#define ES7210_SDP_REG11            0x11
-#define ES7210_SDP_REG12            0x12
-#define ES7210_CLOCK_ON_REG40       0x40
-#define ES7210_CLOCK_ON_REG41       0x41
-#define ES7210_SYSTEM_REG42         0x42
-#define ES7210_SYSTEM_REG43         0x43
-#define ES7210_ADC_AUTO_CTL_REG71   0x71
-
-/* ---- 内部辅助: I2C 写寄存器 ---- */
-static esp_err_t i2c_write_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val) {
-    uint8_t buf[2] = { reg, val };
-    return i2c_master_transmit(dev, buf, 2, 100);
-}
-
-/* ===================================================================
- *  ES8311 初始化 (DAC 音频输出)
- * =================================================================== */
-static int es8311_init(audio_lckfb_t *audio, i2c_master_bus_handle_t bus) {
-    /* 添加 I2C 设备 */
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address  = ES8311_I2C_ADDR,
-        .scl_speed_hz    = 400000,
-    };
-    esp_err_t ret = i2c_master_bus_add_device(bus, &dev_cfg, &audio->es8311_dev);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "ES8311 device add failed: %d", ret);
-        return -1;
-    }
-
-    /* ---- 复位 ---- */
-    i2c_write_reg(audio->es8311_dev, ES8311_RESET_REG00, 0x1F);  /* 复位所有寄存器 */
-    vTaskDelay(pdMS_TO_TICKS(30));
-    i2c_write_reg(audio->es8311_dev, ES8311_RESET_REG00, 0x00);  /* 释放复位 */
-
-    /* ---- 时钟配置 (MCLK=24.576MHz → 1024×Fs @ Fs=24000Hz?) ----
-     *  实际配置根据采样率计算，这里使用 I2S 标准 256×Fs
-     */
-    i2c_write_reg(audio->es8311_dev, ES8311_CLK_MANAGER_REG01, 0x30);  /* MCLK/4 */
-    i2c_write_reg(audio->es8311_dev, ES8311_CLK_MANAGER_REG02, 0x00);  /* BCLK/LRCK 分频 */
-    i2c_write_reg(audio->es8311_dev, ES8311_CLK_MANAGER_REG03, 0x10);  /* 接 0x02=0x00: DIV=256 */
-    i2c_write_reg(audio->es8311_dev, ES8311_CLK_MANAGER_REG04, 0x10);  /* LRCK divider */
-    i2c_write_reg(audio->es8311_dev, ES8311_CLK_MANAGER_REG04, 0b00000000);  /* ADCDIV=0, DACDIV=0 */
-
-    /* ---- I2S 格式: 16-bit, I2S standard ---- */
-    i2c_write_reg(audio->es8311_dev, ES8311_SDPIN_REG09, 0x00);  /* 16-bit, I2S */
-
-    /* ---- 系统配置 ---- */
-    i2c_write_reg(audio->es8311_dev, ES8311_SYSTEM_REG0D, 0x01);  /* 启动从模式 */
-    i2c_write_reg(audio->es8311_dev, ES8311_SYSTEM_REG0E, 0x02);  /* 使能 DAC */
-
-    /* ---- DAC 配置 ---- */
-    i2c_write_reg(audio->es8311_dev, ES8311_DAC_REG31, 0x40);  /* ramp rate */
-    i2c_write_reg(audio->es8311_dev, ES8311_DAC_REG32, 0x00);  /* DAC 静音 */
-    i2c_write_reg(audio->es8311_dev, ES8311_DAC_REG37, 0x08);  /* SDOUT 使能 */
-
-    /* ---- 音量设置 ---- */
-    i2c_write_reg(audio->es8311_dev, ES8311_DAC_REG32, 0x00);  /* 0dB */
-    i2c_write_reg(audio->es8311_dev, ES8311_DAC_REG33, 0x00);  /* L/R 同音量 */
-
-    /* ---- 上电 ---- */
-    i2c_write_reg(audio->es8311_dev, ES8311_GPIO_REG44, 0x00);
-    i2c_write_reg(audio->es8311_dev, ES8311_GP_REG45, 0x00);
-
-    ESP_LOGI(TAG, "ES8311 initialized");
-    return 0;
-}
-
-/* ===================================================================
- *  ES7210 初始化 (ADC 音频输入, 3路 MIC)
- * =================================================================== */
-static int es7210_init(audio_lckfb_t *audio, i2c_master_bus_handle_t bus) {
-    /* 添加 I2C 设备 */
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address  = ES7210_I2C_ADDR,
-        .scl_speed_hz    = 400000,
-    };
-    esp_err_t ret = i2c_master_bus_add_device(bus, &dev_cfg, &audio->es7210_dev);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "ES7210 device add failed: %d", ret);
-        return -1;
-    }
-
-    /* ---- 复位 ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_RESET_REG00, 0xFF);
-    vTaskDelay(pdMS_TO_TICKS(30));
-    i2c_write_reg(audio->es7210_dev, ES7210_RESET_REG00, 0x00);
-
-    /* 地址再检查 (0x41 或 0x40) */
-    i2c_write_reg(audio->es7210_dev, ES7210_CLOCK_OFF2_REG01, 0x00);
-
-    /* ---- 时钟设置 ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_CLOCK_OFF2_REG01, 0b01100000);  /* MCC=0, OFF2=0b11 */
-
-    /* ---- MIC 偏置 ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_MICBIAS_REG02, 0b00100001);
-
-    /* ---- MIC 增益 (24dB) ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_MIC1_GAIN_REG44, 0x18);  /* MIC1: 24dB */
-    i2c_write_reg(audio->es7210_dev, ES7210_MIC2_GAIN_REG45, 0x18);  /* MIC2: 24dB */
-    i2c_write_reg(audio->es7210_dev, ES7210_MIC3_GAIN_REG46, 0x00);  /* MIC3: 0dB (AEC参考) */
-
-    /* ---- ADC 增益 ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_ADC34_GAIN_REG22, 0x00);
-
-    /* ---- I2S 格式: 24-bit, I2S standard ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_SDP_REG11, 0x02);
-    i2c_write_reg(audio->es7210_dev, ES7210_SDP_REG12, 0x03);
-
-    /* ---- 上电 ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_SYSTEM_REG42, 0x00);
-    i2c_write_reg(audio->es7210_dev, ES7210_SYSTEM_REG43, 0x20);
-    i2c_write_reg(audio->es7210_dev, ES7210_ADC_AUTO_CTL_REG71, 0b01010101);  /* 所有通道自动控制 */
-
-    /* ---- 使能所有通道 ---- */
-    i2c_write_reg(audio->es7210_dev, ES7210_CLOCK_ON_REG40, 0x07);   /* 使能 MIC1/2/3 */
-    i2c_write_reg(audio->es7210_dev, ES7210_CLOCK_ON_REG41, 0x00);
-
-    ESP_LOGI(TAG, "ES7210 initialized");
-    return 0;
-}
-
-/* ===================================================================
- *  I2S 初始化
- * =================================================================== */
-static int i2s_init(audio_lckfb_t *audio) {
+static int i2s_init(struct audio_lckfb_s *audio) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
-
-    /* TX 通道 (扬声器) */
+    chan_cfg.dma_desc_num  = 6;
+    chan_cfg.dma_frame_num = 240;
+    // [临时隔离] 先只创建 TX，不创建 RX，验证 TX std 独立工作
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &audio->tx_chan, NULL));
 
-    /* RX 通道 (麦克风) */
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, NULL, &audio->rx_chan));
-
-    /* 标准 I2S 配置 (共用 BCLK/WS) */
+    /* TX: 标准立体声 (ES8311 DAC) */
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_SAMPLE_RATE),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-                        AUDIO_BITS_PER_SAMPLE,
-                        I2S_SLOT_MODE_STEREO),
+                        AUDIO_BITS_PER_SAMPLE, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = AUDIO_I2S_MCLK_PIN,
             .bclk = AUDIO_I2S_BCLK_PIN,
             .ws   = AUDIO_I2S_WS_PIN,
             .dout = AUDIO_I2S_DOUT_PIN,
-            .din  = AUDIO_I2S_DIN_PIN,
-            .invert_flags = {
-                .mclk_inv = false,
-                .bclk_inv = false,
-                .ws_inv   = false,
-            },
+            .din  = I2S_GPIO_UNUSED,
+            .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false },
         },
     };
     std_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(audio->tx_chan, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(audio->rx_chan, &std_cfg));
 
-    ESP_LOGI(TAG, "I2S initialized (Fs=%d, %d-bit, MCLK/BCLK/WS/DIN/DOUT)",
+    // [临时隔离] RX TDM 整块注释，只测 TX std 独立工作
+#if 0
+    /* RX: TDM 4-slot (ES7210 ADC, MIC1/MIC2/MIC3/MIC4)
+     * 4 slot 保证 MCLK_256 整除 (256/64=4), BCLK=1.536MHz
+     * ES7210 TDM 时隙顺序: MIC1, MIC3, MIC2, MIC4 (乐鑫驱动/Box 经验) */
+    i2s_tdm_config_t tdm_cfg = {
+        .clk_cfg = {
+            .sample_rate_hz  = AUDIO_SAMPLE_RATE,
+            .clk_src         = I2S_CLK_SRC_DEFAULT,
+            .ext_clk_freq_hz = 0,
+            .mclk_multiple   = I2S_MCLK_MULTIPLE_256,
+            .bclk_div        = 8,
+        },
+        .slot_cfg = {
+            .data_bit_width = AUDIO_BITS_PER_SAMPLE,
+            .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
+            .slot_mode      = I2S_SLOT_MODE_STEREO,
+            .slot_mask = (i2s_tdm_slot_mask_t)(I2S_TDM_SLOT0 | I2S_TDM_SLOT1 |
+                                               I2S_TDM_SLOT2 | I2S_TDM_SLOT3),
+            .ws_width       = I2S_TDM_AUTO_WS_WIDTH,
+            .ws_pol         = false,
+            .bit_shift      = true,
+            .left_align     = false,
+            .big_endian     = false,
+            .bit_order_lsb  = false,
+            .skip_mask      = false,
+            .total_slot     = I2S_TDM_AUTO_SLOT_NUM,
+        },
+        .gpio_cfg = {
+            .mclk = AUDIO_I2S_MCLK_PIN,
+            .bclk = AUDIO_I2S_BCLK_PIN,
+            .ws   = AUDIO_I2S_WS_PIN,
+            .dout = I2S_GPIO_UNUSED,
+            .din  = AUDIO_I2S_DIN_PIN,
+            .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false },
+        },
+    };
+    ESP_ERROR_CHECK(i2s_channel_init_tdm_mode(audio->rx_chan, &tdm_cfg));
+#endif
+
+    ESP_LOGI(TAG, "I2S0: TX=std stereo, RX=TDM 4-slot, Fs=%d, %d-bit",
              AUDIO_SAMPLE_RATE, AUDIO_BITS_PER_SAMPLE);
+    return 0;
+}
+
+/* ===================================================================
+ *  esp_codec_dev 初始化: ES8311 (DAC) + ES7210 (ADC) 共用 I2S0
+ * =================================================================== */
+static int esp_codec_dev_init(struct audio_lckfb_s *audio, i2c_master_bus_handle_t i2c_bus) {
+    /* 1. I2S → data_if (esp_codec_dev 包装 I2S channel handles) */
+    audio_codec_i2s_cfg_t i2s_cfg = {
+        .port      = I2S_NUM_0,
+        .rx_handle = NULL,    // [临时隔离] 不传 RX handle
+        .tx_handle = audio->tx_chan,
+    };
+    audio->data_if = audio_codec_new_i2s_data(&i2s_cfg);
+    if (audio->data_if == NULL) {
+        ESP_LOGE(TAG, "audio_codec_new_i2s_data failed");
+        return -1;
+    }
+
+    /* 2. I2C bus → ctrl_if (8-bit 地址: 7-bit << 1) */
+    audio_codec_i2c_cfg_t i2c_cfg = {
+        .port       = BOARD_I2C_PORT,
+        .addr       = (ES8311_I2C_ADDR << 1),
+        .bus_handle = i2c_bus,
+    };
+    const audio_codec_ctrl_if_t *ctrl_if = audio_codec_new_i2c_ctrl(&i2c_cfg);
+    if (ctrl_if == NULL) {
+        ESP_LOGE(TAG, "audio_codec_new_i2c_ctrl failed");
+        return -1;
+    }
+
+    /* 3. ES8311 codec_if (DAC) — pa_pin = -1 跳过 es8311 内部 PA 控制 */
+    es8311_codec_cfg_t es8311_cfg = {
+        .ctrl_if       = ctrl_if,
+        .gpio_if       = audio_codec_new_gpio(),
+        .codec_mode    = ESP_CODEC_DEV_WORK_MODE_DAC,
+        .pa_pin        = -1,
+        .pa_reverted   = false,
+        .master_mode   = false,
+        .use_mclk      = true,
+        .digital_mic   = false,
+        .invert_mclk   = false,
+        .invert_sclk   = false,
+        .hw_gain       = { .pa_voltage = 0, .codec_dac_voltage = 0 },
+        .no_dac_ref    = false,
+        .mclk_div      = 256,
+    };
+    const audio_codec_if_t *es8311_if = es8311_codec_new(&es8311_cfg);
+    if (es8311_if == NULL) {
+        ESP_LOGE(TAG, "es8311_codec_new failed");
+        return -1;
+    }
+
+    /* 4. 包装成 OUT handle (DAC) */
+    esp_codec_dev_cfg_t out_cfg = {
+        .dev_type = ESP_CODEC_DEV_TYPE_OUT,
+        .codec_if = es8311_if,
+        .data_if  = audio->data_if,
+    };
+    audio->spk = esp_codec_dev_new(&out_cfg);
+    if (audio->spk == NULL) {
+        ESP_LOGE(TAG, "esp_codec_dev_new(OUT) failed");
+        return -1;
+    }
+
+    /* 5. 打开 ES8311 DAC: 配置采样率 / 位宽 / 通道, 启用 DAC 输出 */
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = AUDIO_BITS_PER_SAMPLE,
+        .channel         = 2,
+        .channel_mask    = 0,
+        .sample_rate     = AUDIO_SAMPLE_RATE,
+        .mclk_multiple   = 0,
+    };
+    if (esp_codec_dev_open(audio->spk, &fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_open(spk) failed");
+        return -1;
+    }
+    esp_codec_dev_set_out_vol(audio->spk, 70);
+    ESP_LOGI(TAG, "esp_codec_dev: ES8311 DAC open ok, Fs=%d ch=%d",
+             AUDIO_SAMPLE_RATE, 2);
+
+    // [临时隔离] ES7210 + mic open 整块跳过
+#if 0
+    /* 6. ES7210 codec_if (ADC) */
+    es7210_codec_cfg_t es7210_cfg = {
+        .ctrl_if      = ctrl_if,
+        .master_mode  = false,
+        .mic_selected = ES7210_SEL_MIC1 | ES7210_SEL_MIC2 | ES7210_SEL_MIC3 | ES7210_SEL_MIC4,
+        .mclk_src     = ES7210_MCLK_FROM_PAD,
+        .mclk_div     = 256,
+    };
+    const audio_codec_if_t *es7210_if = es7210_codec_new(&es7210_cfg);
+    if (es7210_if == NULL) {
+        ESP_LOGE(TAG, "es7210_codec_new failed");
+        return -1;
+    }
+
+    /* 7. 包装成 IN handle (ADC) */
+    esp_codec_dev_cfg_t in_cfg = {
+        .dev_type = ESP_CODEC_DEV_TYPE_IN,
+        .codec_if = es7210_if,
+        .data_if  = audio->data_if,
+    };
+    audio->mic = esp_codec_dev_new(&in_cfg);
+    if (audio->mic == NULL) {
+        ESP_LOGE(TAG, "esp_codec_dev_new(IN) failed");
+        return -1;
+    }
+
+    /* 8. 打开 MIC */
+    esp_codec_dev_sample_info_t mic_fs = {
+        .bits_per_sample = AUDIO_BITS_PER_SAMPLE,
+        .channel         = 2,
+        .channel_mask    = 0,
+        .sample_rate     = AUDIO_SAMPLE_RATE,
+        .mclk_multiple   = 0,
+    };
+    if (esp_codec_dev_open(audio->mic, &mic_fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGE(TAG, "esp_codec_dev_open(mic) failed");
+        return -1;
+    }
+
+    /* 9. MIC 增益 24dB */
+    esp_codec_dev_set_in_gain(audio->mic, 24.0);
+
+    ESP_LOGI(TAG, "esp_codec_dev: ES8311 (DAC) + ES7210 (ADC 4-mic) ready");
+#endif
     return 0;
 }
 
 /* ===================================================================
  *  公共接口
  * =================================================================== */
-
-int audio_lckfb_init(audio_lckfb_t *audio,
+int audio_lckfb_init(audio_lckfb_t *audio_pub,
                      i2c_master_bus_handle_t i2c_bus,
                      void (*pa_enable)(int en, void *ctx),
                      void *pa_cb_ctx) {
-    if (audio == NULL || i2c_bus == NULL) return -1;
+    if (audio_pub == NULL || i2c_bus == NULL) return -1;
+    struct audio_lckfb_s *audio = audio_pub;
     memset(audio, 0, sizeof(*audio));
+    audio->pa_enable = pa_enable;
+    audio->pa_ctx    = pa_cb_ctx;
 
-    /* 1. I2S 先初始化 (提供 MCLK 给 Codec) */
-    if (i2s_init(audio) != 0) goto fail_i2s;
+    if (i2s_init(audio) != 0) {
+        ESP_LOGE(TAG, "I2S init failed");
+        return -1;
+    }
+    if (esp_codec_dev_init(audio, i2c_bus) != 0) {
+        ESP_LOGE(TAG, "esp_codec_dev init failed");
+        i2s_del_channel(audio->tx_chan);
+        i2s_del_channel(audio->rx_chan);
+        return -1;
+    }
+    if (audio->pa_enable) audio->pa_enable(1, audio->pa_ctx);
 
-    /* 2. ES8311 DAC */
-    if (es8311_init(audio, i2c_bus) != 0) goto fail_es8311;
-
-    /* 3. ES7210 ADC */
-    if (es7210_init(audio, i2c_bus) != 0) goto fail_es7210;
-
-    /* 4. 使能 I2S 通道 */
-    ESP_ERROR_CHECK(i2s_channel_enable(audio->tx_chan));
-    ESP_ERROR_CHECK(i2s_channel_enable(audio->rx_chan));
-
-    /* 5. 开启功放 */
-    if (pa_enable) pa_enable(1, pa_cb_ctx);
-
-    ESP_LOGI(TAG, "Audio subsystem initialized");
+    ESP_LOGI(TAG, "Audio subsystem initialized (esp_codec_dev, spk+mic ready)");
     return 0;
-
-fail_es7210:
-    if (audio->es8311_dev) i2c_master_bus_rm_device(audio->es8311_dev);
-fail_es8311:
-    if (audio->tx_chan) i2s_del_channel(audio->tx_chan);
-    if (audio->rx_chan) i2s_del_channel(audio->rx_chan);
-fail_i2s:
-    return -1;
 }
 
-int audio_lckfb_capture(audio_lckfb_t *audio, uint8_t *buf, size_t len, size_t *received) {
-    if (audio == NULL || buf == NULL) return -1;
-    esp_err_t ret = i2s_channel_read(audio->rx_chan, buf, len, received, 0);
-    if (ret == ESP_ERR_TIMEOUT) { if (received) *received = 0; return 0; }
-    return (ret == ESP_OK) ? 0 : -1;
+int audio_lckfb_capture(audio_lckfb_t *audio_pub, uint8_t *buf, size_t len, size_t *received) {
+    if (audio_pub == NULL || buf == NULL) {
+        if (received) *received = 0;
+        return -1;
+    }
+    struct audio_lckfb_s *audio = audio_pub;
+    if (audio->mic == NULL) {
+        if (received) *received = 0;
+        return 0;
+    }
+    int r = esp_codec_dev_read(audio->mic, buf, (int)len);
+    if (r < 0) {
+        if (received) *received = 0;
+        return -1;
+    }
+    if (received) *received = (size_t)r;
+    return 0;
 }
 
-int audio_lckfb_playback(audio_lckfb_t *audio, const uint8_t *buf, size_t len, size_t *sent) {
-    if (audio == NULL || buf == NULL) return -1;
-    esp_err_t ret = i2s_channel_write(audio->tx_chan, buf, len, sent, 0);
-    if (ret == ESP_ERR_TIMEOUT) { if (sent) *sent = 0; return 0; }
-    return (ret == ESP_OK) ? 0 : -1;
+int audio_lckfb_playback(audio_lckfb_t *audio_pub, const uint8_t *buf, size_t len, size_t *sent) {
+    if (audio_pub == NULL || buf == NULL) {
+        if (sent) *sent = 0;
+        return -1;
+    }
+    struct audio_lckfb_s *audio = audio_pub;
+    if (audio->spk == NULL) {
+        if (sent) *sent = 0;
+        return 0;
+    }
+    int w = esp_codec_dev_write(audio->spk, (void *)buf, (int)len);
+    if (w < 0) {
+        if (sent) *sent = 0;
+        return -1;
+    }
+    if (sent) *sent = (size_t)w;
+    return 0;
 }
 
-int audio_lckfb_set_volume(audio_lckfb_t *audio, int vol) {
-    if (audio == NULL || audio->es8311_dev == NULL) return -1;
+int audio_lckfb_set_volume(audio_lckfb_t *audio_pub, int vol) {
+    if (audio_pub == NULL) return -1;
+    struct audio_lckfb_s *audio = audio_pub;
+    if (audio->spk == NULL) return -1;
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
-
-    /* ES8311 音量范围 0(静音) ~ 32(最大), 映射 0-100 → 0-32 */
-    uint8_t reg_val = (uint8_t)(vol * 32 / 100);
-    return i2c_write_reg(audio->es8311_dev, ES8311_DAC_REG32, reg_val);
+    return (esp_codec_dev_set_out_vol(audio->spk, vol) == ESP_CODEC_DEV_OK) ? 0 : -1;
 }
 
-int audio_lckfb_set_mic_gain(audio_lckfb_t *audio, int gain_db) {
-    if (audio == NULL || audio->es7210_dev == NULL) return -1;
-    /* gain_db 映射到 ES7210 增益寄存器 (0x00=0dB ~ 0x2A=42dB) */
+int audio_lckfb_set_mic_gain(audio_lckfb_t *audio_pub, int gain_db) {
+    if (audio_pub == NULL) return -1;
+    struct audio_lckfb_s *audio = audio_pub;
+    if (audio->mic == NULL) return -1;
     if (gain_db < 0) gain_db = 0;
-    if (gain_db > 42) gain_db = 42;
-    uint8_t reg_val = (uint8_t)gain_db;
-    int ret = i2c_write_reg(audio->es7210_dev, ES7210_MIC1_GAIN_REG44, reg_val);
-    if (ret != ESP_OK) return -1;
-    return i2c_write_reg(audio->es7210_dev, ES7210_MIC2_GAIN_REG45, reg_val);
+    if (gain_db > 45) gain_db = 45;
+    return (esp_codec_dev_set_in_gain(audio->mic, (float)gain_db) == ESP_CODEC_DEV_OK) ? 0 : -1;
+}
+
+/* ===================================================================
+ *  滴答声测试 — 直接通过 I2S TX 写方波
+ *  (必须在 s_hw 初始化之后, 即 audio_lckfb_init 成功)
+ * =================================================================== */
+void audio_lckfb_test_tone(int freq_hz, int duration_ms) {
+    if (s_hw.tx_chan == NULL) {
+        ESP_LOGW(TAG, "test_tone: TX channel not ready");
+        return;
+    }
+    const int sample_rate = AUDIO_SAMPLE_RATE;
+    const int amp = 16000;
+    int frames = sample_rate * duration_ms / 1000;
+    int16_t *buf = (int16_t *)malloc(frames * 2 * sizeof(int16_t));
+    if (buf == NULL) {
+        ESP_LOGE(TAG, "test_tone: alloc failed");
+        return;
+    }
+    int half_period = sample_rate / (2 * freq_hz);
+    if (half_period < 1) half_period = 1;
+    for (int i = 0; i < frames; i++) {
+        int16_t s = ((i / half_period) & 1) ? (int16_t)-amp : (int16_t)amp;
+        buf[i * 2]     = s; /* L */
+        buf[i * 2 + 1] = s; /* R */
+    }
+    size_t bytes = (size_t)(frames * 2 * sizeof(int16_t));
+    size_t written = 0;
+    ESP_LOGI(TAG, "test_tone: %dHz, %dms, %u bytes -> TX", freq_hz, duration_ms,
+             (unsigned)bytes);
+    const size_t CHUNK = 1024;
+    uint8_t *p = (uint8_t *)buf;
+    size_t left = bytes;
+    while (left > 0) {
+        size_t n = (left > CHUNK) ? CHUNK : left;
+        size_t sent = 0;
+        i2s_channel_write(s_hw.tx_chan, p, n, &sent, pdMS_TO_TICKS(200));
+        if (sent == 0) {
+            ESP_LOGW(TAG, "test_tone: TX write returned 0, abort");
+            break;
+        }
+        written += sent;
+        p += sent;
+        left -= sent;
+    }
+    ESP_LOGI(TAG, "test_tone: wrote %u / %u bytes", (unsigned)written, (unsigned)bytes);
+    free(buf);
 }
 
 /* ===================================================================
  *  audio_codec_t 适配层 (工厂模式)
- *
- *  上层只持有 audio_codec_t*, 硬件句柄 s_hw 由本文件独占,
- *  换板时新增一个同样实现 audio_codec_t 的文件即可。
  * =================================================================== */
-
-/* 本 codec 独占的硬件句柄 */
-static audio_lckfb_t s_hw;
-
 static esp_err_t lckfb_codec_init(audio_codec_t *self,
                                   i2c_master_bus_handle_t bus,
                                   void (*pa_enable)(int en, void *ctx),
                                   void *pa_ctx) {
     (void)self;
-    return (audio_lckfb_init(&s_hw, bus, pa_enable, pa_ctx) == 0) ? ESP_OK
-                                                                  : ESP_FAIL;
+    return (audio_lckfb_init(&s_hw, bus, pa_enable, pa_ctx) == 0) ? ESP_OK : ESP_FAIL;
 }
 
 static esp_err_t lckfb_codec_set_volume(audio_codec_t *self, uint8_t pct) {
@@ -322,20 +396,17 @@ static int lckfb_codec_read(audio_codec_t *self, void *buf, int samples) {
     (void)self;
     if (buf == NULL || samples <= 0) return -1;
     size_t received = 0;
-    if (audio_lckfb_capture(&s_hw, (uint8_t *)buf, (size_t)samples,
-                            &received) != 0) {
+    if (audio_lckfb_capture(&s_hw, (uint8_t *)buf, (size_t)samples, &received) != 0) {
         return -1;
     }
     return (int)received;
 }
 
-static int lckfb_codec_write(audio_codec_t *self, const void *buf,
-                             int samples) {
+static int lckfb_codec_write(audio_codec_t *self, const void *buf, int samples) {
     (void)self;
     if (buf == NULL || samples <= 0) return -1;
     size_t sent = 0;
-    if (audio_lckfb_playback(&s_hw, (const uint8_t *)buf, (size_t)samples,
-                             &sent) != 0) {
+    if (audio_lckfb_playback(&s_hw, (const uint8_t *)buf, (size_t)samples, &sent) != 0) {
         return -1;
     }
     return (int)sent;

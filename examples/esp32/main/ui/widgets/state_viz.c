@@ -140,10 +140,13 @@ static void create_listening_viz(void) {
   lv_obj_set_style_radius(ui.listening.icon_base, 1, 0);
   lv_obj_set_style_border_width(ui.listening.icon_base, 0, 0);
 
+  /* 左右柱必须关于圆心 ORB_CX=160 完全镜像对称。
+   * 旧 xs_r = {+40..+72} 与 xs_l {-75..-43} 不对称(右侧贴圆盘, 左侧悬空)，
+   * 导致圆和柱整体视觉错位。xs_r 取 xs_l 关于 ORB_CX 的镜像: +43..+75。 */
   static const int xs_l[5] = {
       ORB_CX - 75, ORB_CX - 67, ORB_CX - 59, ORB_CX - 51, ORB_CX - 43};
   static const int xs_r[5] = {
-      ORB_CX + 40, ORB_CX + 48, ORB_CX + 56, ORB_CX + 64, ORB_CX + 72};
+      ORB_CX + 43, ORB_CX + 51, ORB_CX + 59, ORB_CX + 67, ORB_CX + 75};
   static const int default_h[5] = {8, 16, 26, 18, 10};
   for (int i = 0; i < 5; i++) {
     ui.listening.bars_l[i] = lv_obj_create(lv_screen_active());
@@ -229,13 +232,18 @@ void state_viz_listening_register(void) {
 }
 
 static void create_thinking_viz(void) {
+  /* Center disc is an lv_obj whose visible bounds == its size, while the two
+   * arcs draw their stroke inward from their object edge (arc_width=4), so
+   * the arcs' inner edge sits at size - arc_width = 92. To keep the disc and
+   * the arcs visually concentric (no gap / no "off-center" look), the disc
+   * diameter is sized to 92 to exactly meet the arcs' inner edge. */
   ui.thinking.circle = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(ui.thinking.circle, 80, 80);
+  lv_obj_set_size(ui.thinking.circle, 92, 92);
   pos_centered(ui.thinking.circle, ORB_CX, ORB_CY);
   lv_obj_set_style_bg_color(ui.thinking.circle, C_PURPLE, 0);
   lv_obj_set_style_bg_opa(ui.thinking.circle, LV_OPA_20, 0);
   lv_obj_set_style_border_width(ui.thinking.circle, 0, 0);
-  lv_obj_set_style_radius(ui.thinking.circle, 40, 0);
+  lv_obj_set_style_radius(ui.thinking.circle, 46, 0);
 
   ui.thinking.static_arc = lv_arc_create(lv_screen_active());
   lv_obj_set_size(ui.thinking.static_arc, 96, 96);
@@ -309,16 +317,26 @@ static void create_speaking_viz(void) {
   lv_obj_set_style_radius(ui.speaking.icon_speaker, 3, 0);
   lv_obj_set_style_border_width(ui.speaking.icon_speaker, 0, 0);
 
+  /* Wave rings as border-only lv_obj (same recipe as the idle rings), NOT
+   * lv_arc: lv_arc draws its stroke inward from the object edge, so its
+   * visible radius is size/2 - arc_width and it never lines up concentrically
+   * with the center circle (an lv_obj whose visible bounds = its size).
+   * Border-only lv_obj keeps visible bounds == size, so every ring stays
+   * perfectly concentric with the center circle at ORB. */
   static const int wave_sizes[3] = {96, 110, 124};
   for (int i = 0; i < 3; i++) {
     int s = wave_sizes[i];
-    ui.speaking.wave_arcs[i] = lv_arc_create(lv_screen_active());
+    ui.speaking.wave_arcs[i] = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(ui.speaking.wave_arcs[i]);
     lv_obj_set_size(ui.speaking.wave_arcs[i], s, s);
     pos_centered(ui.speaking.wave_arcs[i], ORB_CX, ORB_CY);
-    lv_arc_set_bg_angles(ui.speaking.wave_arcs[i], 0, 360);
-    lv_obj_set_style_arc_width(ui.speaking.wave_arcs[i], 2, 0);
-    lv_obj_set_style_arc_color(ui.speaking.wave_arcs[i], C_PURPLE, 0);
-    lv_obj_remove_style(ui.speaking.wave_arcs[i], NULL, LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(ui.speaking.wave_arcs[i], LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(ui.speaking.wave_arcs[i], 2, 0);
+    lv_obj_set_style_border_color(ui.speaking.wave_arcs[i], C_PURPLE, 0);
+    lv_obj_set_style_border_opa(ui.speaking.wave_arcs[i], LV_OPA_70, 0);
+    lv_obj_set_style_radius(ui.speaking.wave_arcs[i], s / 2, 0);
+    lv_obj_clear_flag(ui.speaking.wave_arcs[i],
+                      LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
     lv_anim_t a;
     lv_anim_init(&a);

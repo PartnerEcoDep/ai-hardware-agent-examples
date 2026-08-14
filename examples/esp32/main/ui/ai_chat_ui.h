@@ -13,6 +13,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "convai_event.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -50,6 +51,10 @@ void ai_chat_ui_set_state(chat_state_t state);
 void ai_chat_ui_set_network(bool online);
 void ai_chat_ui_set_connection(const char *ssid, const char *ip,
                                bool online);
+/* Cloud-side connection state, driven by SDK events (on_convai_event). */
+void ai_chat_ui_set_cloud(bool connected);
+/* convai_bridge_on_event handler — wired up in ai_chat_ui_init(). */
+void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info);
 void ai_chat_ui_update_volume(uint8_t level);
 
 /* touch indicator — red dot at the touch point (coord text removed) */
