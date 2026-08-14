@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "lvgl.h"
 #include "ai_chat_ui.h"
@@ -70,16 +71,26 @@ static void lv_tick_timer_cb(void *arg)
 
 static esp_timer_handle_t s_tick_timer = NULL;
 static esp_lcd_touch_handle_t s_touch_handle = NULL;
+static TaskHandle_t s_lvgl_task_handle = NULL;
 
 static void lvgl_task(void *arg)
 {
     (void)arg;
+    uint32_t hb_cnt = 0;
     while (1) {
         if (lvgl_port_lock(pdMS_TO_TICKS(20))) {
             lv_timer_handler();
             lvgl_port_unlock();
         }
         vTaskDelay(pdMS_TO_TICKS(5));
+
+        /* Heartbeat every ~30s to confirm lvgl_task is alive */
+        if (++hb_cnt >= 6000) {
+            hb_cnt = 0;
+            ESP_LOGI(TAG, "lvgl heartbeat: free_heap=%u, stack_hwm=%u",
+                     (unsigned)esp_get_free_heap_size(),
+                     (unsigned)uxTaskGetStackHighWaterMark(NULL));
+        }
     }
 }
 
@@ -150,7 +161,7 @@ int lvgl_port_init(void)
                           &lv_font_montserrat_14);  /* 默认字体 */
 
     /* 7. LVGL 任务 — 5ms 周期驱动事件循环，钉 CPU1 */
-    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 12288, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 16384, NULL, 5, &s_lvgl_task_handle, 1);
 
     ESP_LOGI(TAG, "LVGL ready (display %dx%d)", LCD_H_RES, LCD_V_RES);
     return 0;
@@ -188,10 +199,12 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         data->point.y = (lv_coord_t)sy;
         data->state = LV_INDEV_STATE_PRESSED;
         ai_chat_ui_touch_indicator(sx, sy);
+        ai_chat_ui_touch_swipe(sx, sy, true);
     } else {
         s_prev_pressed = false;
         data->state = LV_INDEV_STATE_RELEASED;
         ai_chat_ui_touch_indicator_hide();
+        ai_chat_ui_touch_swipe(0, 0, false);
     }
 }
 

@@ -13,8 +13,11 @@ extern "C" {
 
 /* 音色条目 */
 typedef struct {
-    const char *name;
-    const char *voice_type;
+    const char *name;         /* 显示名，如 "阳光少年" */
+    const char *voice_type;   /* SDK voice_type 字符串 */
+    const char *desc;         /* 简短描述，如 "清晰明亮 适合日常交流" */
+    const char *tags;         /* 标签，如 "清晰 年轻 活力" */
+    const char *code;         /* 编号，如 "M02" */
 } voice_entry_t;
 
 /* Gender 分类 */
