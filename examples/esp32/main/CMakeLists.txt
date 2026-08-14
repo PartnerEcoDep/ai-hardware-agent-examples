@@ -32,6 +32,8 @@ idf_component_register(
 
         # ---- SDK 对接 (sdk/) ----
         "sdk/sdk_init.c"
+        "sdk/convai_bridge_defaults.c"
+        "sdk/convai_config_file.c"
 
         # ---- SDK 平台 HAL (sdk/platform/) ----
         "sdk/platform/convai_platform_esp32.c"
@@ -92,5 +94,7 @@ idf_component_register(
         mbedtls
         lwip
         esp-wifi-connect
-        convai_sdk_stub          # ★ STUB — 正式 SDK 到位后改回 convai_sdk
+        convai_sdk              # 真实 SDK（libconvai_sdk.a）
 )
+
+idf_build_set_property(LINK_OPTIONS "-Wl,--allow-multiple-definition" APPEND)

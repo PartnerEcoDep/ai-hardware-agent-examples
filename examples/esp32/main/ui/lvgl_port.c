@@ -88,9 +88,6 @@ static void lvgl_task(void *arg)
         }
         TickType_t t1 = xTaskGetTickCount();
         uint32_t elapsed = (t1 - t0) * portTICK_PERIOD_MS;
-        if (elapsed > 50) {
-            ESP_LOGW(TAG, "lvgl_timer_handler slow: %u ms (one frame should be <5ms)", (unsigned)elapsed);
-        }
         vTaskDelay(pdMS_TO_TICKS(5));
 
         /* Heartbeat every ~10s (2000 x 5ms) to confirm lvgl_task is alive

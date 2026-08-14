@@ -12,6 +12,7 @@
 #include "audio_init.h"
 #include "board_init.h"
 #include "board_lckfb_szpi.h"
+#include "convai_bridge_defaults.h"
 #include "convai_platform_esp32.h"
 
 #include "esp_log.h"
@@ -23,15 +24,6 @@
 #include <stdlib.h>
 
 static const char *TAG = "sdk_init";
-
-/* ===================================================================
- *  Device credentials — single place to configure the product.
- *  Replace the placeholder values with your real product info.
- * =================================================================== */
-#define DEVICE_PRODUCT_ID      "your_product_id"
-#define DEVICE_PRODUCT_KEY     "your_product_key"
-#define DEVICE_PRODUCT_SECRET  "your_product_secret"
-#define DEVICE_NAME            "esp32s3_lckfb_01"
 
 /* Shared SDK engine handle. */
 convai_engine_t g_engine = NULL;
@@ -219,12 +211,8 @@ esp_err_t sdk_init(void) {
     return err;
   }
 
-  char config_json[256];
-  snprintf(config_json, sizeof(config_json),
-           "{\"product_id\":\"%s\",\"product_key\":\"%s\","
-           "\"product_secret\":\"%s\",\"device_name\":\"%s\"}",
-           DEVICE_PRODUCT_ID, DEVICE_PRODUCT_KEY,
-           DEVICE_PRODUCT_SECRET, DEVICE_NAME);
+  char config_json[2048];
+  bridge_build_config_json(config_json, sizeof(config_json), NULL);
 
   convai_event_handler_t handler = {
       .on_convai_event = on_sdk_event,
@@ -240,7 +228,11 @@ esp_err_t sdk_init(void) {
     return ESP_FAIL;
   }
 
-  convai_opt_t opt = {.mode = CONVAI_MODE_WS};
+  convai_opt_t opt = {
+      .mode = CONVAI_MODE_WS,
+      .agent_id = bridge_get_default_agent_id(),
+      .params = bridge_get_default_startup_config(),
+  };
   sdk_ret = convai_start(g_engine, &opt);
   if (sdk_ret != CONVAI_OK) {
     ESP_LOGE(TAG, "convai_start failed: %d", sdk_ret);
