@@ -10,10 +10,4 @@ examples/goldieos/tools/burn/**/BurnTool/optLog/
 
 # ESP-IDF 包管理器自动下载的依赖
 managed_components/
-
-# 文档（不入库）
-docs/
 examples/esp32/tools/node_modules/
-
-# 真实 SDK 静态库（由内网编出的产物，体积大；不入库，README 说明取用方式）
-libs/esp32s3/*.a
