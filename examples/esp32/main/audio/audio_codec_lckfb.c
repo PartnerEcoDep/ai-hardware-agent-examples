@@ -293,3 +293,62 @@ int audio_lckfb_set_mic_gain(audio_lckfb_t *audio, int gain_db) {
     if (ret != ESP_OK) return -1;
     return i2c_write_reg(audio->es7210_dev, ES7210_MIC2_GAIN_REG45, reg_val);
 }
+
+/* ===================================================================
+ *  audio_codec_t 适配层 (工厂模式)
+ *
+ *  上层只持有 audio_codec_t*, 硬件句柄 s_hw 由本文件独占,
+ *  换板时新增一个同样实现 audio_codec_t 的文件即可。
+ * =================================================================== */
+
+/* 本 codec 独占的硬件句柄 */
+static audio_lckfb_t s_hw;
+
+static esp_err_t lckfb_codec_init(audio_codec_t *self,
+                                  i2c_master_bus_handle_t bus,
+                                  void (*pa_enable)(int en, void *ctx),
+                                  void *pa_ctx) {
+    (void)self;
+    return (audio_lckfb_init(&s_hw, bus, pa_enable, pa_ctx) == 0) ? ESP_OK
+                                                                  : ESP_FAIL;
+}
+
+static esp_err_t lckfb_codec_set_volume(audio_codec_t *self, uint8_t pct) {
+    (void)self;
+    return (audio_lckfb_set_volume(&s_hw, (int)pct) == 0) ? ESP_OK : ESP_FAIL;
+}
+
+static int lckfb_codec_read(audio_codec_t *self, void *buf, int samples) {
+    (void)self;
+    if (buf == NULL || samples <= 0) return -1;
+    size_t received = 0;
+    if (audio_lckfb_capture(&s_hw, (uint8_t *)buf, (size_t)samples,
+                            &received) != 0) {
+        return -1;
+    }
+    return (int)received;
+}
+
+static int lckfb_codec_write(audio_codec_t *self, const void *buf,
+                             int samples) {
+    (void)self;
+    if (buf == NULL || samples <= 0) return -1;
+    size_t sent = 0;
+    if (audio_lckfb_playback(&s_hw, (const uint8_t *)buf, (size_t)samples,
+                             &sent) != 0) {
+        return -1;
+    }
+    return (int)sent;
+}
+
+audio_codec_t audio_codec_lckfb_szpi = {
+    .name       = AUDIO_CODEC_LCKFB_SZPI_NAME,
+    .init       = lckfb_codec_init,
+    .set_volume = lckfb_codec_set_volume,
+    .read       = lckfb_codec_read,
+    .write      = lckfb_codec_write,
+};
+
+esp_err_t audio_codec_lckfb_register(void) {
+    return audio_codec_factory_register(&audio_codec_lckfb_szpi);
+}
