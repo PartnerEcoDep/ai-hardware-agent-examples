@@ -15,6 +15,9 @@
 #include "ai_chat_ui_internal.h"
 #include "esp_log.h"
 #include "convai_bridge.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include <stdint.h>
 
 #define CAPSULE_COUNT 4
 
@@ -50,9 +53,9 @@ static void capsule_style(lv_obj_t *capsule, int center_x, lv_color_t color,
   lv_obj_set_style_bg_opa(capsule, opa, 0);
   lv_obj_set_style_border_width(capsule, 0, 0);
   lv_obj_set_style_border_opa(capsule, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_shadow_width(capsule, 14, 0);
+  lv_obj_set_style_shadow_width(capsule, 0, 0);
   lv_obj_set_style_shadow_color(capsule, color, 0);
-  lv_obj_set_style_shadow_opa(capsule, LV_OPA_40, 0);
+  lv_obj_set_style_shadow_opa(capsule, LV_OPA_TRANSP, 0);
 }
 
 static void show_capsules(lv_color_t color, lv_opa_t opa) {
@@ -356,9 +359,15 @@ void voice_sel_refresh_timbres(void) {
   }
 }
 
+static chat_state_t s_prev_state = CHAT_IDLE;
+
+void voice_sel_save_prev_state(chat_state_t state) {
+  s_prev_state = state;
+}
+
 void voice_sel_close(void) {
   ai_chat_ui_show_voice_selector(false);
-  ai_chat_ui_set_state(CHAT_IDLE);
+  ai_chat_ui_set_state(s_prev_state);
 }
 
 static void on_gender_btn_click(lv_event_t *e) {
@@ -373,19 +382,42 @@ static void on_gender_btn_click(lv_event_t *e) {
   voice_sel_refresh_timbres();
 }
 
+/* Voice switching calls convai_update() (a network round-trip) plus an
+ * NVS commit. Running that from the LVGL event callback would hold the
+ * LVGL lock for seconds, blocking ai_chat_ui_set_state() from the SDK
+ * thread and freezing the UI. So we close the selector immediately and
+ * defer the blocking engine update to a short-lived worker task. */
+static volatile bool s_voice_applying = false;
+
+static void voice_apply_task(void *arg) {
+  int voice_id = (int)(intptr_t)arg;
+  ESP_LOGI(TAG, "voice_apply_task: id=%d", voice_id);
+  if (voice_factory_select(convai_bridge_get_engine(), voice_id) != 0) {
+    ESP_LOGE(TAG, "apply voice failed (id=%d)", voice_id);
+  }
+  s_voice_applying = false;
+  vTaskDelete(NULL);
+}
+
 static void on_voice_sel_confirm(lv_event_t *e) {
   (void)e;
+  if (s_voice_applying) {
+    ESP_LOGW(TAG, "voice apply already in progress");
+    return;
+  }
   const voice_select_viz_t *vs = &ui.voice_sel;
   voice_gender_t gender = (voice_gender_t)vs->gender_idx;
   int voice_id = voice_factory_gender_voice_id(gender, vs->timbre_idx);
   const char *name = voice_factory_gender_voice_name(gender, vs->timbre_idx);
 
   ESP_LOGI(TAG, "confirm: id=%d name=%s", voice_id, name);
-  if (voice_factory_select(convai_bridge_get_engine(), voice_id) != 0) {
-    ESP_LOGE(TAG, "apply voice failed (id=%d), keeping selector open", voice_id);
-    return;
-  }
+  s_voice_applying = true;
   voice_sel_close();
+  if (xTaskCreate(voice_apply_task, "voice_apply", 6144,
+                  (void *)(intptr_t)voice_id, 5, NULL) != pdPASS) {
+    s_voice_applying = false;
+    ESP_LOGE(TAG, "voice_apply task create failed (id=%d)", voice_id);
+  }
 }
 
 static void on_voice_sel_back(lv_event_t *e) {
@@ -398,7 +430,7 @@ static void create_voice_select_viz(void) {
   voice_select_viz_t *vs = &ui.voice_sel;
 
   vs->panel = lv_obj_create(lv_screen_active());
-  /* 顶部留出 40px 给状态栏(含音量控制), 保证所有状态下音量都可调 */
+  /* 椤堕儴鐣欏嚭 40px 缁欑姸鎬佹爮(鍚煶閲忔帶鍒?, 淇濊瘉鎵€鏈夌姸鎬佷笅闊抽噺閮藉彲璋?*/
   lv_obj_set_size(vs->panel, 320, 200);
   lv_obj_set_pos(vs->panel, 0, 40);
   lv_obj_set_style_bg_color(vs->panel, lv_color_hex(0x0F0F14), 0);

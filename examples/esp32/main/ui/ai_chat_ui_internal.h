@@ -131,6 +131,9 @@ void state_viz_voice_select_register(void);
 /** Redraw the voice card for the current gender + timbre index. */
 void voice_sel_refresh_timbres(void);
 
+/** Save the state to restore when voice selector closes. */
+void voice_sel_save_prev_state(chat_state_t state);
+
 /** Close the voice selector without applying the selection. */
 void voice_sel_close(void);
 

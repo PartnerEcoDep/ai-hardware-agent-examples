@@ -48,6 +48,11 @@ esp_err_t audio_set_volume(uint8_t pct);
  */
 uint8_t audio_get_volume(void);
 
+/**
+ * @brief Flush any pending volume change to NVS (call from main loop).
+ */
+void audio_volume_flush(void);
+
 #ifdef __cplusplus
 }
 #endif

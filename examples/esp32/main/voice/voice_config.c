@@ -8,6 +8,9 @@
 
 static const char *TAG = "voice_cfg";
 
+/* 默认人设/系统提示词，与 convai_bridge_defaults.c 的 DEFAULT_STARTUP_CONFIG 保持一致 */
+#define DEFAULT_SYSTEM_MESSAGE "你的名字叫小荷，你可以帮小朋友解决小烦恼哦。"
+
 /* ===================================================================
  *  音色表：name 和 voice_type 下标一一对应
  * =================================================================== */
@@ -126,6 +129,14 @@ int voice_config_init(void) {
     s_voice_id = nvs_load_voice_id();
     printf("[%s] loaded voice_id=%d -> %s\n", TAG,
            s_voice_id, s_voices[s_voice_id].name);
+
+    /* 同步到 bridge 的 startup config, 确保引擎启动时用的是 NVS 保存的音色;
+     * 否则 g_startup_config 为空, 引擎会回退到硬编码默认音色, 与 UI 显示不一致 */
+    char json[512];
+    if (voice_config_build_json(json, sizeof(json), DEFAULT_SYSTEM_MESSAGE) > 0) {
+        convai_bridge_set_startup_config(json);
+    }
+
     return s_voice_id;
 }
 
@@ -147,8 +158,7 @@ int voice_config_set(convai_engine_t engine, int voice_id) {
 
     /* 构建 JSON */
     char json[512];
-    int n = voice_config_build_json(json, sizeof(json),
-                                    "你的名字叫小荷，你可以帮小朋友解决小烦恼哦。");
+    int n = voice_config_build_json(json, sizeof(json), DEFAULT_SYSTEM_MESSAGE);
     if (n <= 0) {
         s_voice_id = old_id;
         return -1;

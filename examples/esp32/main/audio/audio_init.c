@@ -23,6 +23,11 @@ static audio_codec_t *s_codec = NULL;
 /* Last applied hardware playback volume (%). */
 static uint8_t s_volume = AUDIO_VOLUME_DEFAULT;
 
+/* Pending NVS save flag. Set by audio_set_volume() (which may run under the
+ * LVGL lock) and flushed by audio_volume_flush() from the main loop, so the
+ * slow flash commit never blocks the LVGL task. */
+static volatile bool s_volume_dirty = false;
+
 /* NVS namespace/key used to persist the hardware playback volume. */
 #define AUDIO_NVS_NAMESPACE "audio"
 #define AUDIO_NVS_VOLUME_KEY "volume"
@@ -110,9 +115,18 @@ esp_err_t audio_set_volume(uint8_t pct) {
   }
 
   s_volume = pct;
-  audio_volume_save(pct);
+  s_volume_dirty = true;  /* NVS commit deferred to audio_volume_flush() */
   ESP_LOGI(TAG, "hardware volume -> %u%%", (unsigned)pct);
   return ESP_OK;
 }
 
 uint8_t audio_get_volume(void) { return s_volume; }
+
+void audio_volume_flush(void) {
+  if (!s_volume_dirty) {
+    return;
+  }
+  s_volume_dirty = false;
+  uint8_t v = s_volume;
+  audio_volume_save(v);
+}

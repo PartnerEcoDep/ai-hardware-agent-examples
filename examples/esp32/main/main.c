@@ -107,7 +107,6 @@ void app_main(void) {
   lvgl_port_touch_init(g_i2c_bus);
   voice_factory_init();
   ui_panel_factory_show(UI_PANEL_CHAT_MAIN);
-  ai_chat_ui_set_network(wifi_prov_is_connected());
   printf("AI Chat UI ready (IDLE)\n");
   fflush(stdout);
 
@@ -132,6 +131,7 @@ skip_hw:
   while (1) {
     button_handler_poll();
     ai_chat_ui_tick();
+    audio_volume_flush();
 
     if (++s_hb_cnt >= 200) { /* ~10s */
       s_hb_cnt = 0;

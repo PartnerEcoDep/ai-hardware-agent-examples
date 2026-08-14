@@ -229,7 +229,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
   }
   s_last_change = now;
 
-  if (!lvgl_port_lock(pdMS_TO_TICKS(500))) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(2000))) {
     ESP_LOGE(TAG, "set_state: failed to acquire LVGL lock");
     return;
   }

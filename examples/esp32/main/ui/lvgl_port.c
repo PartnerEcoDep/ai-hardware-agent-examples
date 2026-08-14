@@ -79,6 +79,7 @@ static void lv_tick_timer_cb(void *arg)
 static esp_timer_handle_t s_tick_timer = NULL;
 static esp_lcd_touch_handle_t s_touch_handle = NULL;
 static TaskHandle_t s_lvgl_task_handle = NULL;
+static i2c_master_dev_handle_t s_touch_i2c_dev = NULL;
 
 static void lvgl_task(void *arg)
 {
@@ -180,7 +181,7 @@ int lvgl_port_init(void)
                           &lv_font_montserrat_14);  /* 默认字体 */
 
     /* 7. LVGL 任务 — 5ms 周期驱动事件循环，钉 CPU1 */
-    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 16384, NULL, 5, &s_lvgl_task_handle, 1);
+    xTaskCreatePinnedToCore(lvgl_task, "lvgl", 24576, NULL, 5, &s_lvgl_task_handle, 1);
 
     ESP_LOGI(TAG, "LVGL ready (display %dx%d)", LCD_H_RES, LCD_V_RES);
     return 0;
@@ -190,46 +191,86 @@ int lvgl_port_init(void)
  *  触摸屏驱动 — FT6336 @ I2C 0x38
  * =================================================================== */
 
+#define FT6336_I2C_ADDR         0x38
+#define FT6336_REG_POINTS       0x02
+#define FT6336_REG_TOUCH1       0x03
+#define FT6336_TOUCH_TIMEOUT_MS 50
+
 
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
     static bool s_prev_pressed = false;
 
-    /* The esp_lcd_touch library reads the FT6336 and applies swap_xy +
-     * mirror_x (configured in lvgl_port_touch_init) to produce screen
-     * coordinates directly. */
-    esp_lcd_touch_point_data_t tp_point = {0};
-    uint8_t tp_cnt = 0;
-    esp_lcd_touch_read_data(s_touch_handle);
-    esp_lcd_touch_get_data(s_touch_handle, &tp_point, &tp_cnt, 1);
-
-    if (tp_cnt > 0) {
-        int sx = tp_point.x;
-        int sy = tp_point.y;
-        if (sx < 0) sx = 0; else if (sx > 319) sx = 319;
-        if (sy < 0) sy = 0; else if (sy > 239) sy = 239;
-
-        if (!s_prev_pressed) {
-            ESP_LOGI(TAG, "touch: screen=(%d,%d)", sx, sy);
-        }
-        s_prev_pressed = true;
-        data->point.x = (lv_coord_t)sx;
-        data->point.y = (lv_coord_t)sy;
-        data->state = LV_INDEV_STATE_PRESSED;
-        ai_chat_ui_touch_indicator(sx, sy);
-        ai_chat_ui_touch_swipe(sx, sy, true);
-    } else {
-        s_prev_pressed = false;
+    if (s_touch_i2c_dev == NULL) {
         data->state = LV_INDEV_STATE_RELEASED;
-        ai_chat_ui_touch_indicator_hide();
-        ai_chat_ui_touch_swipe(0, 0, false);
+        return;
     }
+
+    /* 读触摸点数 (寄存器 0x02, 1 字节), 带 50ms 超时 */
+    uint8_t reg = FT6336_REG_POINTS;
+    uint8_t points = 0;
+    if (i2c_master_transmit_receive(s_touch_i2c_dev, &reg, 1, &points, 1,
+                                    FT6336_TOUCH_TIMEOUT_MS) != ESP_OK) {
+        goto touch_released;
+    }
+    if (points == 0 || points > 5) {
+        goto touch_released;
+    }
+
+    /* 读第一个触摸点 (寄存器 0x03 起 6 字节), 带 50ms 超时 */
+    uint8_t buf[6];
+    reg = FT6336_REG_TOUCH1;
+    if (i2c_master_transmit_receive(s_touch_i2c_dev, &reg, 1, buf, 6,
+                                    FT6336_TOUCH_TIMEOUT_MS) != ESP_OK) {
+        goto touch_released;
+    }
+
+    /* FT6336 原生坐标 240x320(竖屏) → 320x240(横屏):
+     * swap_xy + mirror_x (与 esp_lcd_touch 软件调整一致) */
+    int raw_x = ((buf[0] & 0x0F) << 8) | buf[1];   /* 0..239 */
+    int raw_y = ((buf[2] & 0x0F) << 8) | buf[3];   /* 0..319 */
+    int sx = raw_y;                 /* swap_xy */
+    int sy = LCD_V_RES - raw_x;     /* mirror_x (x_max=240) + swap_xy */
+    if (sx < 0) sx = 0; else if (sx > (LCD_H_RES - 1)) sx = (LCD_H_RES - 1);
+    if (sy < 0) sy = 0; else if (sy > (LCD_V_RES - 1)) sy = (LCD_V_RES - 1);
+
+    if (!s_prev_pressed) {
+        ESP_LOGI(TAG, "touch: screen=(%d,%d)", sx, sy);
+    }
+    s_prev_pressed = true;
+    data->point.x = (lv_coord_t)sx;
+    data->point.y = (lv_coord_t)sy;
+    data->state = LV_INDEV_STATE_PRESSED;
+    ai_chat_ui_touch_indicator(sx, sy);
+    ai_chat_ui_touch_swipe(sx, sy, true);
+    return;
+
+touch_released:
+    s_prev_pressed = false;
+    data->state = LV_INDEV_STATE_RELEASED;
+    ai_chat_ui_touch_indicator_hide();
+    ai_chat_ui_touch_swipe(0, 0, false);
 }
 
 int lvgl_port_touch_init(i2c_master_bus_handle_t i2c_bus)
 {
     ESP_LOGI(TAG, "Initializing FT6336 touch @ 0x38");
+
+    /* 独立的带超时 I2C 设备句柄: esp_lcd_touch 库的读超时硬编码为 -1,
+     * 触摸读会永久阻塞 lvgl_task。这里直接用 i2c_master 读, 见 touch_read_cb。 */
+    i2c_device_config_t touch_dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = FT6336_I2C_ADDR,
+        .scl_speed_hz = 400000,
+    };
+    esp_err_t ret = i2c_master_bus_add_device(i2c_bus, &touch_dev_cfg,
+                                              &s_touch_i2c_dev);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add touch I2C device: %s",
+                 esp_err_to_name(ret));
+        return -1;
+    }
 
     /* 必须套用官方 FT5x06 I2C 配置宏：它设定了
      * disable_control_phase = 1。若此项为 0，I2C 读帧格式错误，
@@ -239,7 +280,7 @@ int lvgl_port_touch_init(i2c_master_bus_handle_t i2c_bus)
     io_cfg.scl_speed_hz = 400000;  /* 参考板用 400kHz 稳定 */
 
     esp_lcd_panel_io_handle_t io_handle = NULL;
-    esp_err_t ret = esp_lcd_new_panel_io_i2c(i2c_bus, &io_cfg, &io_handle);
+    ret = esp_lcd_new_panel_io_i2c(i2c_bus, &io_cfg, &io_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create I2C panel IO: %s",
                  esp_err_to_name(ret));

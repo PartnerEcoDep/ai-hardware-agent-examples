@@ -18,6 +18,7 @@ static void open_voice_selector(void) {
   if (ai_chat_ui_get_state() == CHAT_VOICE_SELECT) {
     return;
   }
+  voice_sel_save_prev_state(ai_chat_ui_get_state());
   ai_chat_ui_show_voice_selector(true);
   ai_chat_ui_set_state(CHAT_VOICE_SELECT);
 }
