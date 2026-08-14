@@ -17,10 +17,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/event_groups.h"
 #include "esp_system.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
 #include "nvs_flash.h"
@@ -37,6 +34,8 @@
 #include "board_lckfb_szpi.h"
 #include "pca9557.h"
 #include "audio_codec_lckfb.h"
+#include "wifi_provisioning.h"
+#include "wifi_prov_ui.h"
 
 static const char *TAG = "main";
 
@@ -48,16 +47,13 @@ static const char *TAG = "main";
 #define DEVICE_PRODUCT_SECRET  "your_product_secret"
 #define DEVICE_NAME            "esp32s3_lckfb_01"
 
-#define WIFI_SSID              "REDMI K Pad"
-#define WIFI_PASSWORD          "66666666"
-
 /* ===================================================================
  *  全局句柄
  * =================================================================== */
 static i2c_master_bus_handle_t g_i2c_bus;
 static pca9557_t               g_pca9557;
 static audio_lckfb_t           g_audio;
-static esp_lcd_panel_handle_t  g_lcd_panel;
+esp_lcd_panel_handle_t  g_lcd_panel;
 static esp_lcd_panel_io_handle_t g_lcd_io;
 static convai_engine_t         g_engine;
 
@@ -281,59 +277,6 @@ static int i2c_bus_init(void) {
 }
 
 /* ===================================================================
- *  Wi-Fi
- * =================================================================== */
-#define WIFI_CONNECTED_BIT BIT0
-static EventGroupHandle_t s_wifi_event_group;
-
-static void wifi_event_handler(void *arg,
-                               esp_event_base_t event_base,
-                               int32_t event_id,
-                               void *event_data) {
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (event_base == WIFI_EVENT &&
-               event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGW(TAG, "Wi-Fi disconnected, reconnecting...");
-        esp_wifi_connect();
-    } else if (event_base == IP_EVENT &&
-               event_id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *ev = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI(TAG, "Wi-Fi connected: " IPSTR, IP2STR(&ev->ip_info.ip));
-        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
-    }
-}
-
-static void wifi_init_sta(void) {
-    s_wifi_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
-
-    wifi_config_t wifi_cfg = {0};
-    strncpy((char *)wifi_cfg.sta.ssid, WIFI_SSID, sizeof(wifi_cfg.sta.ssid) - 1);
-    strncpy((char *)wifi_cfg.sta.password, WIFI_PASSWORD, sizeof(wifi_cfg.sta.password) - 1);
-    wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
-}
-
-static void wifi_wait_connected(void) {
-    xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT,
-                        pdFALSE, pdTRUE, portMAX_DELAY);
-}
-
-/* ===================================================================
  *  SNTP
  * =================================================================== */
 static void sntp_init_sync(void) {
@@ -470,8 +413,7 @@ void app_main(void) {
 
     /* WiFi */
     printf("[7/8] WiFi init...\n"); fflush(stdout);
-    wifi_init_sta();
-    wifi_wait_connected();
+    wifi_prov_ui_run();
     printf("[7/8] WiFi OK\n"); fflush(stdout);
 
     /* HAL + SDK */
@@ -555,8 +497,8 @@ skip_hw:
 
     /* ---- 7. Wi-Fi ---- */
     lcd_show_status(2);  /* 黄色: WiFi 连接中 */
-    wifi_init_sta();
-    wifi_wait_connected();
+    wifi_prov_init();
+    wifi_prov_wait_connected();
 
     /* ---- 8. SNTP ---- */
     lcd_show_status(3);  /* 绿色: 时间同步中 */
