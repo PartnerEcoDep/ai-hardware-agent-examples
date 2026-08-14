@@ -17,9 +17,25 @@ typedef struct {
     const char *voice_type;
 } voice_entry_t;
 
+/* Gender 分类 */
+typedef enum {
+  VOICE_GENDER_FEMALE = 0,
+  VOICE_GENDER_MALE,
+  VOICE_GENDER_ROBOT,
+  VOICE_GENDER_COUNT
+} voice_gender_t;
+
 /* 获取音色列表及数量 */
 const voice_entry_t *voice_config_get_list(void);
 int voice_config_count(void);
+
+/* Gender 分类查询 */
+voice_gender_t voice_config_get_gender(int voice_id);
+const char    *voice_config_get_gender_name(voice_gender_t gender);
+int            voice_config_get_gender_voice_count(voice_gender_t gender);
+const char    *voice_config_get_gender_voice_name(voice_gender_t gender,
+                                                  int idx);
+int            voice_config_get_gender_voice_id(voice_gender_t gender, int idx);
 
 /* 从 NVS 加载当前音色索引（0-based），默认 0 */
 int  voice_config_init(void);

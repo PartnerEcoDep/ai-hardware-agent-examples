@@ -1,18 +1,17 @@
 /**
  * @file main.c
- * @brief 立创·实战派 ESP32-S3 — AI Hardware Agent 入口
+ * @brief LCKFB ESP32-S3 - AI Hardware Agent entry point
  *
- * 启动流程:
- *   1. NVS 初始化
- *   2. I2C 总线 → PCA9557 (LCD_CS / PA_EN)
- *   3. LCD ST7789 320x240 初始化
- *   4. 音频 ES8311+ES7210+I2S 初始化
- *   5. Wi-Fi 连接
- *   6. SNTP 时间同步
- *   7. 注册平台 HAL → 创建 SDK → 启动会话
- *   8. 主循环: 麦克风采集 → SDK → 扬声器播放
+ * Boot sequence:
+ * 1. NVS init
+ * 2. I2C bus -> PCA9557 (LCD_CS / PA_EN)
+ * 3. LCD ST7789 320x240 init
+ * 4. Audio: ES8311 + ES7210 + I2S init
+ * 5. Wi-Fi connect
+ * 6. SNTP time sync
+ * 7. Register platform HAL -> create SDK -> start session
+ * 8. Main loop: mic capture -> SDK -> speaker playback
  */
-
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -37,154 +36,168 @@
 #include "wifi_provisioning.h"
 #include "wifi_prov_ui.h"
 #include "ai_chat_ui.h"
+#include "lvgl_port.h"
 #include "voice_config.h"
 
 static const char *TAG = "main";
 
 /* ===================================================================
- *  设备凭证 — 编译前必须修改
+ * ? ? ? ? ?
  * =================================================================== */
-#define DEVICE_PRODUCT_ID      "your_product_id"
-#define DEVICE_PRODUCT_KEY     "your_product_key"
-#define DEVICE_PRODUCT_SECRET  "your_product_secret"
-#define DEVICE_NAME            "esp32s3_lckfb_01"
+#define DEVICE_PRODUCT_ID "your_product_id"
+#define DEVICE_PRODUCT_KEY "your_product_key"
+#define DEVICE_PRODUCT_SECRET "your_product_secret"
+#define DEVICE_NAME "esp32s3_lckfb_01"
 
 /* ===================================================================
- *  全局句柄
+ * ? ?
  * =================================================================== */
 static i2c_master_bus_handle_t g_i2c_bus;
-static pca9557_t               g_pca9557;
-static audio_lckfb_t           g_audio;
-esp_lcd_panel_handle_t  g_lcd_panel;
-static esp_lcd_panel_io_handle_t g_lcd_io;
-static convai_engine_t         g_engine;
+static pca9557_t g_pca9557;
+static audio_lckfb_t g_audio;
+esp_lcd_panel_handle_t g_lcd_panel;
+esp_lcd_panel_io_handle_t g_lcd_io; /* lvgl_port.c ? extern ? */
+static convai_engine_t g_engine;
 
 /* ===================================================================
- *  按键 (GPIO0, 低电平有效) — 轮询 + 长按/短按区分
+ * ? (GPIO0, ? ? + ?/?
  * =================================================================== */
-#define LONG_PRESS_MS  1500    /* 长按阈值 1.5s */
-#define SHORT_MIN_MS   50      /* 消抖 */
+#define LONG_PRESS_MS 1500 /* ?1.5s */
+#define SHORT_MIN_MS 50    /* ? */
 
-static bool     s_btn_was_down     = false;
-static bool     s_long_press_fired = false;
+static bool s_btn_was_down = false;
+static bool s_long_press_fired = false;
 static TickType_t s_btn_press_tick = 0;
 
-static bool button_is_down(void) {
+static bool button_is_down(void)
+{
     return gpio_get_level(BOARD_BOOT_BUTTON_GPIO) == 0;
 }
 
-static void button_init(void) {
+static void button_init(void)
+{
     gpio_config_t cfg = {
         .pin_bit_mask = (1ULL << BOARD_BOOT_BUTTON_GPIO),
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_ENABLE,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&cfg);
     ESP_LOGI(TAG, "Button GPIO%d init OK (polling)", BOARD_BOOT_BUTTON_GPIO);
 }
 
 /* ===================================================================
- *  PCA9557 功放回调
+ * PCA9557 ?
  * =================================================================== */
-static void pa_enable_cb(int en, void *ctx) {
+static void pa_enable_cb(int en, void *ctx)
+{
     pca9557_t *pca = (pca9557_t *)ctx;
     pca9557_set_output(pca, PCA9557_BIT_PA_EN, en ? 1 : 0);
 }
 
 /* ===================================================================
- *  LCD 初始化 (ST7789 320x240, SPI3, CS 经 PCA9557)
+ * LCD ?(ST7789 320x240, SPI3, CS ?PCA9557)
  * =================================================================== */
-static int lcd_init(void) {
-    /* SPI 总线 */
+static int lcd_init(void)
+{
+    /* SPI ? */
     spi_bus_config_t bus_cfg = {
-        .mosi_io_num     = LCD_MOSI_PIN,
-        .miso_io_num     = GPIO_NUM_NC,
-        .sclk_io_num     = LCD_CLK_PIN,
-        .quadwp_io_num   = GPIO_NUM_NC,
-        .quadhd_io_num   = GPIO_NUM_NC,
-        .max_transfer_sz = LCD_WIDTH * LCD_HEIGHT * 2,
+        .mosi_io_num = LCD_MOSI_PIN,
+        .miso_io_num = GPIO_NUM_NC,
+        .sclk_io_num = LCD_CLK_PIN,
+        .quadwp_io_num = GPIO_NUM_NC,
+        .quadhd_io_num = GPIO_NUM_NC,
+        .max_transfer_sz = LCD_WIDTH * 40 * 2, /* ?40 ?= 25600 bytes, ? ?DMA pool */
     };
     ESP_ERROR_CHECK(spi_bus_initialize(LCD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO));
 
-    /* Panel IO (CS 不在这里配置, 由 PCA9557 手动控制) */
+    /* Panel IO (CS ?, ?PCA9557 ? ?) */
     esp_lcd_panel_io_spi_config_t io_cfg = {
-        .cs_gpio_num       = GPIO_NUM_NC,    /* CS 由 PCA9557 bit0 控制 */
-        .dc_gpio_num       = LCD_DC_PIN,
-        .spi_mode          = LCD_SPI_MODE,
-        .pclk_hz           = LCD_PIXEL_CLOCK_HZ,
+        .cs_gpio_num = GPIO_NUM_NC, /* CS ?PCA9557 bit0 ? */
+        .dc_gpio_num = LCD_DC_PIN,
+        .spi_mode = LCD_SPI_MODE,
+        .pclk_hz = LCD_PIXEL_CLOCK_HZ,
         .trans_queue_depth = 10,
-        .lcd_cmd_bits      = 8,
-        .lcd_param_bits    = 8,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(LCD_SPI_HOST, &io_cfg, &g_lcd_io));
 
-    /* ST7789 驱动 */
+    /* ST7789 ? */
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = GPIO_NUM_NC,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
+        .data_endian = LCD_RGB_DATA_ENDIAN_LITTLE, /* LVGL ?, ST7789 ? ?*/
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(g_lcd_io, &panel_cfg, &g_lcd_panel));
 
-    /* 初始化序列 (与 LCKFB 官方文档 + Zephyr FT6336 版一致) */
+    /* ? ?(?LCKFB ? ? ? + Zephyr FT6336 ? */
     esp_lcd_panel_reset(g_lcd_panel);
-    /* 选中 LCD (PCA9557 CS=低), 必须在 reset 之后、init 之前拉低 */
+    /* ? LCD (PCA9557 CS=?, ?reset ?it ? */
     pca9557_set_output(&g_pca9557, PCA9557_BIT_LCD_CS, 0);
-    esp_lcd_panel_init(g_lcd_panel);  /* SLPOUT + MADCTL + COLMOD + RAMCTRL */
+    esp_lcd_panel_init(g_lcd_panel); /* SLPOUT + MADCTL + COLMOD + RAMCTRL */
 
-    /* ---- 针对 FT6336 版 ST7789 模组的完整厂商初始化 ---- */
+    /* ---- ? FT6336 ?ST7789 ? ---- */
     esp_lcd_panel_io_handle_t io = g_lcd_io;
-    /* PORCTRL (0xB2):  porch 控制 */
+    /* PORCTRL (0xB2): porch ? */
     esp_lcd_panel_io_tx_param(io, 0xB2, (uint8_t[]){0x0C, 0x0C, 0x00, 0x33, 0x33}, 5);
-    /* GCTRL (0xB7):  gate 控制 */
+    /* GCTRL (0xB7): gate ? */
     esp_lcd_panel_io_tx_param(io, 0xB7, (uint8_t[]){0x35}, 1);
-    /* VCOMS (0xBB):  VCOM 电压 */
+    /* VCOMS (0xBB): VCOM ? ? */
     esp_lcd_panel_io_tx_param(io, 0xBB, (uint8_t[]){0x19}, 1);
-    /* LCMCTRL (0xC0):  LCM 控制 */
+    /* LCMCTRL (0xC0): LCM ? */
     esp_lcd_panel_io_tx_param(io, 0xC0, (uint8_t[]){0x2C}, 1);
-    /* VDVVRHEN (0xC2):  VDV/VRH 使能 */
+    /* VDVVRHEN (0xC2): VDV/VRH ? */
     esp_lcd_panel_io_tx_param(io, 0xC2, (uint8_t[]){0x01}, 1);
-    /* VRHS (0xC3):  VRH 电压 */
+    /* VRHS (0xC3): VRH ? ? */
     esp_lcd_panel_io_tx_param(io, 0xC3, (uint8_t[]){0x12}, 1);
-    /* VDVS (0xC4):  VDV 电压 */
+    /* VDVS (0xC4): VDV ? ? */
     esp_lcd_panel_io_tx_param(io, 0xC4, (uint8_t[]){0x20}, 1);
-    /* PWCTRL1 (0xD0):  电源控制 */
+    /* PWCTRL1 (0xD0): ? ? */
     esp_lcd_panel_io_tx_param(io, 0xD0, (uint8_t[]){0xA4, 0xA1}, 2);
-    /* PVGAMCTRL (0xE0):  正 gamma */
+    /* PVGAMCTRL (0xE0): ?gamma */
     esp_lcd_panel_io_tx_param(io, 0xE0,
-        (uint8_t[]){0xD0, 0x04, 0x0D, 0x11, 0x13, 0x2B, 0x3F, 0x54,
-                    0x4C, 0x18, 0x0D, 0x0B, 0x1F, 0x23}, 14);
-    /* NVGAMCTRL (0xE1):  负 gamma */
+                              (uint8_t[]){0xD0, 0x04, 0x0D, 0x11, 0x13, 0x2B, 0x3F, 0x54,
+                                          0x4C, 0x18, 0x0D, 0x0B, 0x1F, 0x23},
+                              14);
+    /* NVGAMCTRL (0xE1): ?gamma */
     esp_lcd_panel_io_tx_param(io, 0xE1,
-        (uint8_t[]){0xD0, 0x04, 0x0C, 0x11, 0x13, 0x2C, 0x3F, 0x44,
-                    0x51, 0x2F, 0x1F, 0x1F, 0x20, 0x23}, 14);
+                              (uint8_t[]){0xD0, 0x04, 0x0C, 0x11, 0x13, 0x2C, 0x3F, 0x44,
+                                          0x51, 0x2F, 0x1F, 0x1F, 0x20, 0x23},
+                              14);
 
     esp_lcd_panel_invert_color(g_lcd_panel, true);
     esp_lcd_panel_swap_xy(g_lcd_panel, true);
     esp_lcd_panel_mirror(g_lcd_panel, true, false);
-    /* disp_on_off 移到填充之后调用 (见 app_main), 与官方文档顺序一致 */
+    /* disp_on_off ? ? (?app_main), ?*/
 
     ESP_LOGI(TAG, "LCD ST7789 %dx%d initialized", LCD_WIDTH, LCD_HEIGHT);
     return 0;
 }
 
-static void lcd_fill(uint16_t color) {
-    /* 简单全屏填色 — 手动字节序转换 (ESP32 小端 → ST7789 大端) */
+static void lcd_fill(uint16_t color)
+{
+    /* ? ?(ESP32 ? ?ST7789 ?) */
     uint16_t *buf = (uint16_t *)heap_caps_malloc(
         LCD_WIDTH * 20 * sizeof(uint16_t), MALLOC_CAP_DMA);
-    if (buf == NULL) {
+    if (buf == NULL)
+    {
         ESP_LOGE(TAG, "lcd_fill: malloc failed");
         return;
     }
     uint16_t swapped = (color << 8) | (color >> 8);
-    for (int i = 0; i < LCD_WIDTH * 20; i++) buf[i] = swapped;
+    for (int i = 0; i < LCD_WIDTH * 20; i++)
+        buf[i] = swapped;
 
-    for (int y = 0; y < LCD_HEIGHT; y += 20) {
+    for (int y = 0; y < LCD_HEIGHT; y += 20)
+    {
         int end_y = y + 20;
-        if (end_y > LCD_HEIGHT) end_y = LCD_HEIGHT;
+        if (end_y > LCD_HEIGHT)
+            end_y = LCD_HEIGHT;
         esp_err_t r = esp_lcd_panel_draw_bitmap(g_lcd_panel, 0, y,
                                                 LCD_WIDTH, end_y, buf);
-        if (r != ESP_OK) {
+        if (r != ESP_OK)
+        {
             ESP_LOGE(TAG, "lcd_fill draw_bitmap y=%d failed: %d", y, r);
             break;
         }
@@ -192,54 +205,83 @@ static void lcd_fill(uint16_t color) {
     free(buf);
 }
 
-/* 四色分屏诊断图: 左上红 / 右上绿 / 左下蓝 / 右下白
- * 全黑=数据没到; 色块错位=方向/偏移问题 */
-static void lcd_diagnostic(void) {
+/* ? ? ? ?/ ?/ ?/ ?
+ * ?=? ?; ?=?/? */
+static void lcd_diagnostic(void)
+{
     const int half_w = LCD_WIDTH / 2;
     const int half_h = LCD_HEIGHT / 2;
-    struct { int x0, y0, x1, y1; uint16_t c; const char *name; } q[4] = {
-        { 0,       0,       half_w,    half_h,    0xF800, "RED"   },
-        { half_w,  0,       LCD_WIDTH, half_h,    0x07E0, "GREEN" },
-        { 0,       half_h,  half_w,    LCD_HEIGHT,0x001F, "BLUE"  },
-        { half_w,  half_h,  LCD_WIDTH, LCD_HEIGHT,0xFFFF, "WHITE" },
+    struct
+    {
+        int x0, y0, x1, y1;
+        uint16_t c;
+        const char *name;
+    } q[4] = {
+        {0, 0, half_w, half_h, 0xF800, "RED"},
+        {half_w, 0, LCD_WIDTH, half_h, 0x07E0, "GREEN"},
+        {0, half_h, half_w, LCD_HEIGHT, 0x001F, "BLUE"},
+        {half_w, half_h, LCD_WIDTH, LCD_HEIGHT, 0xFFFF, "WHITE"},
     };
-    for (int i = 0; i < 4; i++) {
-        uint16_t px = (q[i].c << 8) | (q[i].c >> 8);  /* 大端 */
+    for (int i = 0; i < 4; i++)
+    {
+        uint16_t px = (q[i].c << 8) | (q[i].c >> 8); /* ? */
         int n = (q[i].x1 - q[i].x0) * (q[i].y1 - q[i].y0);
         uint16_t *buf = (uint16_t *)heap_caps_malloc(
             n * sizeof(uint16_t), MALLOC_CAP_DMA);
-        if (buf == NULL) { ESP_LOGE(TAG, "diag %s malloc fail", q[i].name); continue; }
-        for (int k = 0; k < n; k++) buf[k] = px;
+        if (buf == NULL)
+        {
+            ESP_LOGE(TAG, "diag %s malloc fail", q[i].name);
+            continue;
+        }
+        for (int k = 0; k < n; k++)
+            buf[k] = px;
         esp_err_t r = esp_lcd_panel_draw_bitmap(g_lcd_panel,
-                         q[i].x0, q[i].y0, q[i].x1, q[i].y1, buf);
+                                                q[i].x0, q[i].y0, q[i].x1, q[i].y1, buf);
         ESP_LOGI(TAG, "diag %s draw_bitmap -> %d", q[i].name, r);
         free(buf);
     }
 }
 
-/* 用色块显示启动状态 */
-static void lcd_show_status(int step) {
+/* ? ? ?*/
+static void lcd_show_status(int step)
+{
     static const uint16_t colors[] = {
-        0xF800, 0xF840, 0xFC00, 0x07E0,
-        0x07FF, 0x001F, 0x7FFF, 0xFFFF,
+        0xF800,
+        0xF840,
+        0xFC00,
+        0x07E0,
+        0x07FF,
+        0x001F,
+        0x7FFF,
+        0xFFFF,
     };
     lcd_fill(colors[step % 8]);
 }
 
-/* 在屏幕上画几个色块 (测试图案) */
-static void lcd_test_pattern(void) {
+/* ? ? ?(?) */
+static void lcd_test_pattern(void)
+{
     uint16_t *buf = (uint16_t *)heap_caps_malloc(
         LCD_WIDTH * LCD_HEIGHT * sizeof(uint16_t), MALLOC_CAP_DMA);
-    if (buf == NULL) { lcd_fill(0xFFFF); return; }
+    if (buf == NULL)
+    {
+        lcd_fill(0xFFFF);
+        return;
+    }
 
-    /* 左半屏红色, 右半屏绿色 */
-    for (int y = 0; y < LCD_HEIGHT; y++) {
-        for (int x = 0; x < LCD_WIDTH; x++) {
+    /* ? ?*/
+    for (int y = 0; y < LCD_HEIGHT; y++)
+    {
+        for (int x = 0; x < LCD_WIDTH; x++)
+        {
             uint16_t c;
-            if (y < LCD_HEIGHT / 3)        c = 0xF800; /* 红 */
-            else if (y < LCD_HEIGHT * 2/3) c = 0x07E0; /* 绿 */
-            else                           c = 0x001F; /* 蓝 */
-            /* RGB565 大端字节序 */
+            if (y < LCD_HEIGHT / 3)
+                c = 0xF800; /* ?*/
+            else if (y < LCD_HEIGHT * 2 / 3)
+                c = 0x07E0; /* ?*/
+            else
+                c = 0x001F; /* ?*/
+            /* RGB565 ?*/
             buf[y * LCD_WIDTH + x] = (c >> 8) | (c << 8);
         }
     }
@@ -248,52 +290,57 @@ static void lcd_test_pattern(void) {
 }
 
 /* ===================================================================
- *  背光 PWM (LEDC)
+ * ? PWM (LEDC)
  * =================================================================== */
-static void backlight_init(void) {
-    /* 背光低电平有效: 直接 GPIO 拉低, 先不用 PWM */
+static void backlight_init(void)
+{
+    /* ? ? ? GPIO ?, ?PWM */
     gpio_config_t bl_cfg = {
         .pin_bit_mask = (1ULL << LCD_BACKLIGHT_PIN),
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&bl_cfg);
-    gpio_set_level(LCD_BACKLIGHT_PIN, 0);  /* 低电平 = 开启背光 */
+    gpio_set_level(LCD_BACKLIGHT_PIN, 0); /* ?= ?*/
     ESP_LOGI(TAG, "Backlight ON (GPIO%d LOW)", LCD_BACKLIGHT_PIN);
 }
 
 /* ===================================================================
- *  LED 指示
+ * LED ?
  * =================================================================== */
-static void board_led_init(void) {
+static void board_led_init(void)
+{
     gpio_config_t cfg = {
         .pin_bit_mask = (1ULL << BOARD_LED_GPIO),
-        .mode         = GPIO_MODE_OUTPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&cfg);
-    gpio_set_level(BOARD_LED_GPIO, 0);  /* 初始关闭 */
+    gpio_set_level(BOARD_LED_GPIO, 0); /* ? */
 }
 
-static void board_led_set(int on) {
+static void board_led_set(int on)
+{
     gpio_set_level(BOARD_LED_GPIO, on ? 1 : 0);
 }
 
 /* ===================================================================
- *  I2C 总线初始化
+ * I2C ?
  * =================================================================== */
-static int i2c_bus_init(void) {
+static int i2c_bus_init(void)
+{
     i2c_master_bus_config_t cfg = {
-        .i2c_port          = BOARD_I2C_PORT,
-        .sda_io_num        = BOARD_I2C_SDA_PIN,
-        .scl_io_num        = BOARD_I2C_SCL_PIN,
-        .clk_source        = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = BOARD_I2C_PORT,
+        .sda_io_num = BOARD_I2C_SDA_PIN,
+        .scl_io_num = BOARD_I2C_SCL_PIN,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags             = { .enable_internal_pullup = 1 },
+        .flags = {.enable_internal_pullup = 1},
     };
     esp_err_t ret = i2c_new_master_bus(&cfg, &g_i2c_bus);
-    if (ret != ESP_OK) {
+    if (ret != ESP_OK)
+    {
         ESP_LOGE(TAG, "I2C bus init failed: %d", ret);
         return -1;
     }
@@ -303,16 +350,18 @@ static int i2c_bus_init(void) {
 }
 
 /* ===================================================================
- *  SNTP
+ * SNTP
  * =================================================================== */
-static void sntp_init_sync(void) {
+static void sntp_init_sync(void)
+{
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_setservername(1, "ntp.aliyun.com");
     esp_sntp_init();
 
     int retry = 0;
-    while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && retry < 100) {
+    while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && retry < 100)
+    {
         vTaskDelay(pdMS_TO_TICKS(100));
         retry++;
     }
@@ -320,25 +369,27 @@ static void sntp_init_sync(void) {
 }
 
 /* ===================================================================
- *  SDK 事件回调
+ * SDK ? ?
  * =================================================================== */
 static void on_sdk_event(convai_engine_t engine,
-                         convai_event_t *event, void *user_data) {
+                         convai_event_t *event, void *user_data)
+{
     const char *names[] = {
-        [CONVAI_EV_CONNECTED]    = "CONNECTED",
+        [CONVAI_EV_CONNECTED] = "CONNECTED",
         [CONVAI_EV_DISCONNECTED] = "DISCONNECTED",
-        [CONVAI_EV_FAILED]       = "FAILED",
-        [CONVAI_EV_UPDATED]      = "UPDATED",
+        [CONVAI_EV_FAILED] = "FAILED",
+        [CONVAI_EV_UPDATED] = "UPDATED",
     };
     ESP_LOGI(TAG, "SDK event: %s", names[event->code]);
 
-    switch (event->code) {
+    switch (event->code)
+    {
     case CONVAI_EV_CONNECTED:
-        ai_chat_ui_set_cloud_connection(true);
+        /* ?ai_chat_ui_set_connection ? */
         break;
     case CONVAI_EV_DISCONNECTED:
     case CONVAI_EV_FAILED:
-        ai_chat_ui_set_cloud_connection(false);
+        /* ?ai_chat_ui_set_connection ? */
         break;
     default:
         break;
@@ -346,35 +397,37 @@ static void on_sdk_event(convai_engine_t engine,
 }
 
 static void on_conversation_status(convai_engine_t engine,
-                                   convai_status_e status, void *user_data) {
+                                   convai_status_e status, void *user_data)
+{
     const char *names[] = {
-        [CONVAI_STATUS_IDLE]       = "IDLE",
-        [CONVAI_STATUS_LISTENING]  = "LISTENING",
-        [CONVAI_STATUS_THINKING]   = "THINKING",
-        [CONVAI_STATUS_ANSWERING]  = "ANSWERING",
+        [CONVAI_STATUS_IDLE] = "IDLE",
+        [CONVAI_STATUS_LISTENING] = "LISTENING",
+        [CONVAI_STATUS_THINKING] = "THINKING",
+        [CONVAI_STATUS_ANSWERING] = "ANSWERING",
         [CONVAI_STATUS_INTERRUPTED] = "INTERRUPTED",
         [CONVAI_STATUS_ANSWER_FINISHED] = "ANSWER_FINISHED",
     };
     ESP_LOGI(TAG, "Status: %s", names[status]);
 
-    switch (status) {
+    switch (status)
+    {
     case CONVAI_STATUS_LISTENING:
         board_led_set(1);
-        ai_chat_ui_set_state(CHAT_LISTENING);
+        ai_chat_ui_set_state(STATE_LISTENING);
         break;
     case CONVAI_STATUS_THINKING:
         board_led_set(1);
-        ai_chat_ui_set_state(CHAT_THINKING);
+        ai_chat_ui_set_state(STATE_THINKING);
         break;
     case CONVAI_STATUS_ANSWERING:
         board_led_set(0);
-        ai_chat_ui_set_state(CHAT_SPEAKING);
+        ai_chat_ui_set_state(STATE_SPEAKING);
         break;
     case CONVAI_STATUS_IDLE:
     case CONVAI_STATUS_ANSWER_FINISHED:
     default:
         board_led_set(0);
-        ai_chat_ui_set_state(CHAT_IDLE);
+        ai_chat_ui_set_state(STATE_IDLE);
         break;
     }
 }
@@ -382,66 +435,120 @@ static void on_conversation_status(convai_engine_t engine,
 static void on_audio_data(convai_engine_t engine,
                           const void *data, size_t len,
                           const convai_audio_frame_info_t *info,
-                          void *user_data) {
+                          void *user_data)
+{
     audio_lckfb_playback(&g_audio, (const uint8_t *)data, len, NULL);
 }
 
 static void on_message_data(convai_engine_t engine,
                             const void *data, size_t len,
                             const convai_message_info_t *info,
-                            void *user_data) {
+                            void *user_data)
+{
     ESP_LOGI(TAG, "Message: %.*s", (int)len, (const char *)data);
 
-    char *text = strndup((const char *)data, len);
-    if (text) {
-        ai_chat_ui_add_message(text, false);  /* assistant 消息 */
-        free(text);
-    }
+    /* ? ? SDK ? JSON ? stub?
+    ?assistant ? ?VOICE ?
+    ? ?*/
+    (void)data;
+    (void)len;
 }
 
 /* ===================================================================
- *  音频采集任务 (麦克风 → SDK)
+ * G.711 A-law decode + audio level
+ * ===================================================================
+ * Standard ITU-T G.711 A-law -> 16-bit linear PCM.
+ * compute_audio_level() returns a 0..100 smoothed peak level
+ * for the G.711 A-law frame, suitable for driving the listening UI.
+ */
+static int16_t alaw_to_pcm(uint8_t a)
+{
+    a ^= 0x55;
+    int sign = a & 0x80;
+    int seg = (a >> 4) & 0x07;
+    int low = a & 0x0F;
+    int16_t pcm;
+    if (seg == 0)
+    {
+        pcm = (int16_t)((low << 4) | 0x008);
+    }
+    else
+    {
+        pcm = (int16_t)((low + 0x10) << (seg + 3));
+    }
+    return sign ? (int16_t)-pcm : pcm;
+}
+
+static uint8_t compute_audio_level(const uint8_t *g711a, size_t n)
+{
+    static uint8_t smooth = 0;
+    if (n == 0)
+        return 0;
+    int16_t peak = 0;
+    for (size_t i = 0; i < n; i++)
+    {
+        int16_t s = alaw_to_pcm(g711a[i]);
+        if (s < 0)
+            s = (int16_t)-s;
+        if (s > peak)
+            peak = s;
+    }
+    uint8_t v = (uint8_t)(peak * 100 / 32767);
+    /* EMA: 0.6 prev + 0.4 new */
+    smooth = (uint8_t)(smooth * 6 / 10 + v * 4 / 10);
+    return smooth;
+}
+/* ===================================================================
+ * ? (?SDK)
  * =================================================================== */
-#define CAPTURE_BUF_SIZE (AUDIO_SAMPLE_RATE * 2 / 50)  /* 20ms G.711 帧 */
+#define CAPTURE_BUF_SIZE (AUDIO_SAMPLE_RATE * 2 / 50) /* 20ms G.711 ?*/
 
-static void audio_capture_task(void *arg) {
+static void audio_capture_task(void *arg)
+{
     uint8_t *buf = (uint8_t *)malloc(CAPTURE_BUF_SIZE);
-    if (buf == NULL) { vTaskDelete(NULL); return; }
+    if (buf == NULL)
+    {
+        vTaskDelete(NULL);
+        return;
+    }
 
-    while (1) {
+    while (1)
+    {
         size_t received;
         int ret = audio_lckfb_capture(&g_audio, buf, CAPTURE_BUF_SIZE, &received);
-        if (ret == 0 && received > 0 && g_engine) {
-            convai_audio_frame_info_t info = { .data_type = CONVAI_AUDIO_DATA_TYPE_G711A };
+        if (ret == 0 && received > 0 && g_engine)
+        {
+            convai_audio_frame_info_t info = {.data_type = CONVAI_AUDIO_DATA_TYPE_G711A};
+            ai_chat_ui_update_volume(compute_audio_level(buf, received));
             convai_send_audio(g_engine, buf, received, &info);
         }
-        vTaskDelay(pdMS_TO_TICKS(10));  /* 每 10ms 采集一次 */
+        vTaskDelay(pdMS_TO_TICKS(10)); /* ?10ms ? ? ?*/
     }
     free(buf);
     vTaskDelete(NULL);
 }
 
 /* ===================================================================
- *  WiFi 事件回调 — 驱动状态栏更新
+ * WiFi ? ? ? ?
  * =================================================================== */
+#if 0  /* ? ?WiFi ? ?LVGL ? crash */
 static void on_wifi_event(wifi_prov_event_t event) {
-    switch (event) {
-    case WIFI_PROV_EV_CONNECTED:
-        ai_chat_ui_set_connection(
-            wifi_prov_get_ssid(),
-            wifi_prov_get_ip(),
-            true);
-        break;
-    case WIFI_PROV_EV_DISCONNECTED:
-        ai_chat_ui_set_connection("", "", false);
-        break;
-    }
+ switch (event) {
+ case WIFI_PROV_EV_CONNECTED:
+ ai_chat_ui_set_network(true);
+ break;
+ case WIFI_PROV_EV_DISCONNECTED:
+ ai_chat_ui_set_network(false);
+ break;
+ }
 }
+#endif /* ? WiFi ? ? */
 
 /* ===================================================================
- *  app_main — 主入口
+ * app_main ?
  * =================================================================== */
-void app_main(void) {
+void app_main(void)
+{
     printf("\n=== ESP32-S3 Step-by-step Init ===\n\n");
 
     /* GPIO48 LED */
@@ -451,55 +558,82 @@ void app_main(void) {
     };
     gpio_config(&led_cfg);
     gpio_set_level(48, 1);
-    printf("[1/8] GPIO OK\n"); fflush(stdout);
+    printf("[1/8] GPIO OK\n");
+    fflush(stdout);
 
     /* NVS */
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
         nvs_flash_erase();
         nvs_flash_init();
     }
-    printf("[2/8] NVS OK\n"); fflush(stdout);
+    printf("[2/8] NVS OK\n");
+    fflush(stdout);
 
     /* I2C */
-    if (i2c_bus_init() != 0) {
-        printf("[3/8] I2C FAILED — skipping hardware\n");
+    if (i2c_bus_init() != 0)
+    {
+        printf("[3/8] I2C FAILED ?skipping hardware\n");
         goto skip_hw;
     }
-    printf("[3/8] I2C OK\n"); fflush(stdout);
+    printf("[3/8] I2C OK\n");
+    fflush(stdout);
 
     /* PCA9557 */
-    if (pca9557_init(&g_pca9557, g_i2c_bus, PCA9557_I2C_ADDR) != 0) {
-        printf("[4/8] PCA9557 FAILED — LCD/audio won't work\n");
+    if (pca9557_init(&g_pca9557, g_i2c_bus, PCA9557_I2C_ADDR) != 0)
+    {
+        printf("[4/8] PCA9557 FAILED ?LCD/audio won't work\n");
         goto skip_hw;
     }
-    printf("[4/8] PCA9557 OK\n"); fflush(stdout);
+    printf("[4/8] PCA9557 OK\n");
+    fflush(stdout);
 
     /* LCD */
-    printf("[5/8] LCD init...\n"); fflush(stdout);
+    printf("[5/8] LCD init...\n");
+    fflush(stdout);
     lcd_init();
-    lcd_fill(0x0000);                                      /* 先填黑 */
-    esp_lcd_panel_disp_on_off(g_lcd_panel, true);          /* 再开显示 */
+    lcd_fill(0x0000);                             /* ?*/
+    esp_lcd_panel_disp_on_off(g_lcd_panel, true); /* ? ? */
     backlight_init();
-    printf("[5/8] LCD OK\n"); fflush(stdout);
+    printf("[5/8] LCD OK\n");
+    fflush(stdout);
 
     /* Audio */
-    printf("[6/8] Audio init...\n"); fflush(stdout);
-    if (audio_lckfb_init(&g_audio, g_i2c_bus, pa_enable_cb, &g_pca9557) != 0) {
+    printf("[6/8] Audio init...\n");
+    fflush(stdout);
+    if (audio_lckfb_init(&g_audio, g_i2c_bus, pa_enable_cb, &g_pca9557) != 0)
+    {
         printf("[6/8] Audio FAILED\n");
-    } else {
+    }
+    else
+    {
         printf("[6/8] Audio OK\n");
     }
     fflush(stdout);
 
     /* WiFi */
-    printf("[7/8] WiFi init...\n"); fflush(stdout);
-    wifi_prov_register_callback(on_wifi_event);
+    printf("[7/8] WiFi init...\n");
+    fflush(stdout);
+    /* ? ?on_wifi_event ? ?LVGL ?
+    ai_chat_ui_set_connection() ? LVGL ?ai_chat_ui_init() ?
+    WiFi ? LVGL ?*/
     wifi_prov_ui_run();
-    printf("[7/8] WiFi OK\n"); fflush(stdout);
+    printf("[7/8] WiFi OK\n");
+    fflush(stdout);
+
+    /* LVGL + UI ?SDK ? ?SDK ? ? UI ? */
+    lvgl_port_init();
+    lvgl_port_touch_init(g_i2c_bus);
+    ai_chat_ui_init();
+    voice_config_init();
+    ai_chat_ui_set_network(wifi_prov_is_connected());
+    printf("AI Chat UI ready (IDLE)\n");
+    fflush(stdout);
 
     /* HAL + SDK */
-    printf("[8/8] HAL register...\n"); fflush(stdout);
+    printf("[8/8] HAL register...\n");
+    fflush(stdout);
     convai_platform_esp32_init();
 
     char config_json[256];
@@ -510,17 +644,20 @@ void app_main(void) {
              DEVICE_PRODUCT_SECRET, DEVICE_NAME);
 
     convai_event_handler_t handler = {
-        .on_convai_event               = on_sdk_event,
+        .on_convai_event = on_sdk_event,
         .on_convai_conversation_status = on_conversation_status,
-        .on_convai_audio_data          = on_audio_data,
-        .on_convai_message_data        = on_message_data,
+        .on_convai_audio_data = on_audio_data,
+        .on_convai_message_data = on_message_data,
     };
 
     ret = convai_create(&g_engine, config_json, &handler, NULL);
-    if (ret != CONVAI_OK) {
+    if (ret != CONVAI_OK)
+    {
         printf("[8/8] SDK create FAILED: %d\n", ret);
-    } else {
-        convai_opt_t opt = { .mode = CONVAI_MODE_WS };
+    }
+    else
+    {
+        convai_opt_t opt = {.mode = CONVAI_MODE_WS};
         convai_start(g_engine, &opt);
         printf("[8/8] SDK started (v%s)\n", convai_get_version());
         xTaskCreate(audio_capture_task, "audio_cap", 4096, NULL, 5, NULL);
@@ -528,66 +665,56 @@ void app_main(void) {
     fflush(stdout);
 
 skip_hw:
-    /* AI Chat UI — 配网完成后进入空闲状态 */
-    ai_chat_ui_init();
 
-    /* 音色配置 — 从 NVS 恢复上次选择 */
-    voice_config_init();
-
-    /* 更新状态栏：WiFi 连接信息 */
-    ai_chat_ui_set_connection(
-        wifi_prov_get_ssid(),
-        wifi_prov_get_ip(),
-        wifi_prov_is_connected());
-    printf("AI Chat UI ready (IDLE)\n");
-
-    /* 自定义按键 (GPIO0) 初始化 */
+    /* ?(GPIO0) ?*/
     button_init();
 
-    printf("\n=== Init complete — press custom key to start AI conversation ===\n");
+    printf("\n=== Init complete ?press custom key to start AI conversation ===\n");
     gpio_set_level(48, 0);
 
-    while (1) {
+    while (1)
+    {
         bool down = button_is_down();
         TickType_t now = xTaskGetTickCount();
 
-        if (down && !s_btn_was_down) {
-            /* 按键刚按下 */
+        if (down && !s_btn_was_down)
+        {
+            /* ?*/
             s_btn_press_tick = now;
             s_long_press_fired = false;
-
-        } else if (down && s_btn_was_down) {
-            /* 持续按住 — 长按检测 */
+        }
+        else if (down && s_btn_was_down)
+        {
+            /* ? ?*/
             if (!s_long_press_fired &&
-                (now - s_btn_press_tick) * portTICK_PERIOD_MS >= LONG_PRESS_MS) {
-
+                (now - s_btn_press_tick) * portTICK_PERIOD_MS >= LONG_PRESS_MS)
+            {
                 s_long_press_fired = true;
-
-                if (ai_chat_ui_get_state() == CHAT_IDLE) {
-                    /* IDLE 长按 → 打开音色面板 */
-                    ESP_LOGI(TAG, "Long press → voice selector");
-                    ai_chat_ui_show_voice_selector(true);
-                } else if (ai_chat_ui_get_state() == CHAT_VOICE_SELECT) {
-                    /* 音色面板内长按 → 确认并关闭 */
-                    int idx = ai_chat_ui_voice_select_get();
-                    ESP_LOGI(TAG, "Voice confirmed: #%d", idx);
-                    voice_config_set(g_engine, idx);
-                    ai_chat_ui_show_voice_selector(false);
-                }
             }
-
-        } else if (!down && s_btn_was_down) {
-            /* 按键松开 — 短按 */
+        }
+        else if (!down && s_btn_was_down)
+        {
+            /* ? ? ? */
             if (!s_long_press_fired &&
-                (now - s_btn_press_tick) * portTICK_PERIOD_MS >= SHORT_MIN_MS) {
+                (now - s_btn_press_tick) * portTICK_PERIOD_MS >= SHORT_MIN_MS)
+            {
 
-                if (ai_chat_ui_get_state() == CHAT_IDLE) {
-                    /* IDLE 短按 → 启动对话 */
-                    ESP_LOGI(TAG, "Short press → start conversation");
-                    ai_chat_ui_set_state(CHAT_LISTENING);
-                } else if (ai_chat_ui_get_state() == CHAT_VOICE_SELECT) {
-                    /* 音色面板内短按 → 下一项 */
-                    ai_chat_ui_voice_select_next();
+                voice_state_t cur = ai_chat_ui_get_state();
+                if (cur == STATE_IDLE)
+                {
+                    /* IDLE ? ? ? */
+                    ESP_LOGI(TAG, "Short press ?start conversation");
+                    ai_chat_ui_set_state(STATE_LISTENING);
+                }
+                else if (cur == STATE_LISTENING)
+                {
+                    /* ? / ? ? */
+                    ESP_LOGI(TAG, "Short press ?cancel");
+                    ai_chat_ui_set_state(STATE_IDLE);
+                }
+                else if (cur == STATE_VOICE_SELECT)
+                {
+                    /* 已移除：物理按键短按不再操作音色面板 */
                 }
             }
         }
@@ -598,104 +725,104 @@ skip_hw:
     }
 
 #if 0
-    /* ---- 1. NVS ---- */
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
-        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-    ESP_LOGI(TAG, "NVS initialized");
+ /* ---- 1. NVS ---- */
+ esp_err_t ret = nvs_flash_init();
+ if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+ ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+ ESP_ERROR_CHECK(nvs_flash_erase());
+ ret = nvs_flash_init();
+ }
+ ESP_ERROR_CHECK(ret);
+ ESP_LOGI(TAG, "NVS initialized");
 
-    /* ---- 2. I2C 总线 ---- */
-    if (i2c_bus_init() != 0) return;
+ /* ---- 2. I2C ? ---- */
+ if (i2c_bus_init() != 0) return;
 
-    /* ---- 3. PCA9557 IO 扩展 ---- */
-    if (pca9557_init(&g_pca9557, g_i2c_bus, PCA9557_I2C_ADDR) != 0) {
-        ESP_LOGE(TAG, "PCA9557 init failed — LCD/audio won't work");
-        return;
-    }
+ /* ---- 3. PCA9557 IO ? ---- */
+ if (pca9557_init(&g_pca9557, g_i2c_bus, PCA9557_I2C_ADDR) != 0) {
+ ESP_LOGE(TAG, "PCA9557 init failed ?LCD/audio won't work");
+ return;
+ }
 
-    /* ---- 4. LED ---- */
-    board_led_init();
-    board_led_set(1);  /* 启动指示 */
+ /* ---- 4. LED ---- */
+ board_led_init();
+ board_led_set(1); /* ? ? ? */
 
-    /* ---- 5. LCD ---- */
-    lcd_init();
-    backlight_init();
-    lcd_show_status(0);  /* 红色: 开始启动 */
-    ESP_LOGI(TAG, "Display ready");
+ /* ---- 5. LCD ---- */
+ lcd_init();
+ backlight_init();
+ lcd_show_status(0); /* ?: ?*/
+ ESP_LOGI(TAG, "Display ready");
 
-    /* ---- 6. 音频 ---- */
-    lcd_show_status(1);  /* 橙色: 音频初始化中 */
-    if (audio_lckfb_init(&g_audio, g_i2c_bus, pa_enable_cb, &g_pca9557) != 0) {
-        ESP_LOGW(TAG, "Audio init failed — voice unavailable");
-    }
-    audio_lckfb_set_volume(&g_audio, 70);
+ /* ---- 6. ? ---- */
+ lcd_show_status(1); /* ?: ? */
+ if (audio_lckfb_init(&g_audio, g_i2c_bus, pa_enable_cb, &g_pca9557) != 0) {
+ ESP_LOGW(TAG, "Audio init failed ?voice unavailable");
+ }
+ audio_lckfb_set_volume(&g_audio, 70);
 
-    /* ---- 7. Wi-Fi ---- */
-    lcd_show_status(2);  /* 黄色: WiFi 连接中 */
-    wifi_prov_init();
-    wifi_prov_wait_connected();
+ /* ---- 7. Wi-Fi ---- */
+ lcd_show_status(2); /* ?: WiFi ? ?*/
+ wifi_prov_init();
+ wifi_prov_wait_connected();
 
-    /* ---- 8. SNTP ---- */
-    lcd_show_status(3);  /* 绿色: 时间同步中 */
-    sntp_init_sync();
+ /* ---- 8. SNTP ---- */
+ lcd_show_status(3); /* ?: ?*/
+ sntp_init_sync();
 
-    /* ---- 9. 平台 HAL 注册 ---- */
-    lcd_show_status(4);  /* 青色: HAL 注册中 */
-    if (convai_platform_esp32_init() != 0) {
-        ESP_LOGE(TAG, "HAL registration failed");
-        lcd_fill(0xF800);  /* 红色报错 */
-        return;
-    }
+ /* ---- 9. ? HAL ? ---- */
+ lcd_show_status(4); /* ?: HAL ?*/
+ if (convai_platform_esp32_init() != 0) {
+ ESP_LOGE(TAG, "HAL registration failed");
+ lcd_fill(0xF800); /* ? ? */
+ return;
+ }
 
-    /* ---- 10. SDK 引擎 ---- */
-    lcd_show_status(5);  /* 蓝色: SDK 创建中 */
-    char config_json[512];
-    snprintf(config_json, sizeof(config_json),
-             "{\"product_id\":\"%s\",\"product_key\":\"%s\","
-             "\"product_secret\":\"%s\",\"device_name\":\"%s\"}",
-             DEVICE_PRODUCT_ID, DEVICE_PRODUCT_KEY,
-             DEVICE_PRODUCT_SECRET, DEVICE_NAME);
+ /* ---- 10. SDK ? ---- */
+ lcd_show_status(5); /* ?: SDK ?*/
+ char config_json[512];
+ snprintf(config_json, sizeof(config_json),
+ "{\"product_id\":\"%s\",\"product_key\":\"%s\","
+ "\"product_secret\":\"%s\",\"device_name\":\"%s\"}",
+ DEVICE_PRODUCT_ID, DEVICE_PRODUCT_KEY,
+ DEVICE_PRODUCT_SECRET, DEVICE_NAME);
 
-    convai_event_handler_t handler = {
-        .on_convai_event               = on_sdk_event,
-        .on_convai_conversation_status = on_conversation_status,
-        .on_convai_audio_data          = on_audio_data,
-        .on_convai_message_data        = on_message_data,
-    };
+ convai_event_handler_t handler = {
+ .on_convai_event = on_sdk_event,
+ .on_convai_conversation_status = on_conversation_status,
+ .on_convai_audio_data = on_audio_data,
+ .on_convai_message_data = on_message_data,
+ };
 
-    ret = convai_create(&g_engine, config_json, &handler, NULL);
-    if (ret != CONVAI_OK) {
-        ESP_LOGE(TAG, "convai_create failed: %d (%s)", ret, convai_err_2_str(ret));
-        return;
-    }
-    ESP_LOGI(TAG, "SDK engine created (v%s)", convai_get_version());
+ ret = convai_create(&g_engine, config_json, &handler, NULL);
+ if (ret != CONVAI_OK) {
+ ESP_LOGE(TAG, "convai_create failed: %d (%s)", ret, convai_err_2_str(ret));
+ return;
+ }
+ ESP_LOGI(TAG, "SDK engine created (v%s)", convai_get_version());
 
-    /* ---- 11. 启动会话 ---- */
-    convai_opt_t opt = { .mode = CONVAI_MODE_WS };
-    ret = convai_start(g_engine, &opt);
-    if (ret != CONVAI_OK) {
-        ESP_LOGE(TAG, "convai_start failed: %d", ret);
-        lcd_fill(0xF800);  /* 红色: 启动失败 */
-        convai_destroy(g_engine);
-        return;
-    }
-    ESP_LOGI(TAG, "Session started");
+ /* ---- 11. ? ? ---- */
+ convai_opt_t opt = { .mode = CONVAI_MODE_WS };
+ ret = convai_start(g_engine, &opt);
+ if (ret != CONVAI_OK) {
+ ESP_LOGE(TAG, "convai_start failed: %d", ret);
+ lcd_fill(0xF800); /* ?: ? ? */
+ convai_destroy(g_engine);
+ return;
+ }
+ ESP_LOGI(TAG, "Session started");
 
-    /* ---- 12. 启动音频采集 ---- */
-    xTaskCreate(audio_capture_task, "audio_cap", 4096, NULL, 5, NULL);
+ /* ---- 12. ? ? ---- */
+ xTaskCreate(audio_capture_task, "audio_cap", 4096, NULL, 5, NULL);
 
-    /* ---- 13. 主循环 ---- */
-    board_led_set(0);
-    lcd_fill(0xFFFF);  /* 纯白 — 字节序无关, 能亮说明 SPI 通 */
-    printf("LCD filled with WHITE (0xFFFF)\n"); fflush(stdout);
-    ESP_LOGI(TAG, "Ready — press BOOT button or speak to interact");
+ /* ---- 13. ?---- */
+ board_led_set(0);
+ lcd_fill(0xFFFF); /* ? ? ? SPI ?*/
+ printf("LCD filled with WHITE (0xFFFF)\n"); fflush(stdout);
+ ESP_LOGI(TAG, "Ready ?press BOOT button or speak to interact");
 
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
+ while (1) {
+ vTaskDelay(pdMS_TO_TICKS(500));
+ }
 #endif
 }
