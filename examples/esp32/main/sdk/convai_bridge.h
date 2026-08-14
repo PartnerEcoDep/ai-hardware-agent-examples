@@ -9,11 +9,11 @@
  *
  * Differences vs goldieos (intentional, out of scope for now):
  *   - No PTT / audio-mode switching (continuous mic capture).
- *   - No downlink/playback thread (we use the SDK's on_audio_data callback
- *     directly to drive the codec).
+ *   - Downlink uses a ring buffer + playback task to smooth network jitter;
+ *     INTERRUPTED flushes queued TTS so barge-in stops the speaker quickly.
  *   - No comfort timeout, no function-call dispatch, no service_manager.
  *   - No convai_bridge_set_audio_source (mic is the only source).
- *   - convai_bridge_set_startup_config is accepted but not exposed to UI yet.
+ *   - convai_bridge_set_startup_config feeds the voice selector's config.
  */
 #ifndef CONVAI_BRIDGE_H
 #define CONVAI_BRIDGE_H

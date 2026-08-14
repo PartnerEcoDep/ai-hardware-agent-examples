@@ -28,6 +28,7 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/ringbuf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +39,7 @@ static const char *TAG = "convai_bridge";
 /* ---- internal state ---- */
 static convai_engine_t          g_engine        = NULL;
 static convai_status_e          g_status        = CONVAI_STATUS_IDLE;
-static int                      g_started       = 0;
+static volatile int             g_started       = 0;
 static convai_bridge_status_cb  g_status_cb     = NULL;
 static convai_bridge_event_cb   g_event_cb      = NULL;
 static convai_bridge_message_cb g_message_cb    = NULL;
@@ -56,6 +57,70 @@ static char g_startup_config[STARTUP_CONFIG_MAX] = {0};
 static volatile unsigned int s_frames_sent    = 0;
 static volatile unsigned int s_frames_dropped = 0;
 static volatile int          s_capture_running = 0;
+
+/* Downlink playback ring buffer. The SDK audio callback only enqueues decoded
+ * PCM here; a dedicated high-priority task drains it to the codec, smoothing
+ * network/decoding jitter and keeping the I2S driver fed at its own pace. */
+#define PLAYBACK_RING_SIZE (48 * 1024)
+#define PLAYBACK_READ_CHUNK 1024
+#define PLAYBACK_POLL_MS 10
+static RingbufHandle_t s_playback_rb = NULL;
+static TaskHandle_t s_playback_task = NULL;
+static volatile unsigned int s_playback_dropped = 0;
+static volatile int s_playback_flush = 0;
+
+static void audio_playback_task(void *arg) {
+  (void)arg;
+  while (1) {
+    size_t item_size = 0;
+    void *item = xRingbufferReceiveUpTo(s_playback_rb, &item_size,
+                                        pdMS_TO_TICKS(PLAYBACK_POLL_MS),
+                                        PLAYBACK_READ_CHUNK);
+
+    if (s_playback_flush) {
+      if (item != NULL) {
+        vRingbufferReturnItem(s_playback_rb, item);
+        continue;
+      }
+      s_playback_flush = 0;
+      continue;
+    }
+
+    if (item == NULL) {
+      continue;
+    }
+
+    if (g_started && g_engine != NULL) {
+      audio_codec_t *codec = audio_codec_active();
+      if (codec != NULL && codec->write != NULL) {
+        codec->write(codec, item, (int)item_size);
+      }
+    }
+
+    vRingbufferReturnItem(s_playback_rb, item);
+  }
+}
+
+static void playback_ring_init(void) {
+  if (s_playback_rb != NULL) {
+    return;
+  }
+
+  s_playback_rb = xRingbufferCreate(PLAYBACK_RING_SIZE, RINGBUF_TYPE_BYTEBUF);
+  if (s_playback_rb == NULL) {
+    ESP_LOGE(TAG, "playback ringbuffer create failed (fallback: direct write)");
+    return;
+  }
+
+  BaseType_t ok = xTaskCreate(audio_playback_task, "audio_play",
+                             8192, NULL, 6, &s_playback_task);
+  if (ok != pdPASS) {
+    ESP_LOGE(TAG, "playback task create failed");
+    vRingbufferDelete(s_playback_rb);
+    s_playback_rb = NULL;
+    s_playback_task = NULL;
+  }
+}
 
 /* ---- SDK callbacks ---- */
 
@@ -137,7 +202,14 @@ static void on_status(convai_engine_t engine, convai_status_e status,
       ai_chat_ui_set_state(STATE_SPEAKING);
       break;
     case CONVAI_STATUS_IDLE:
+      board_led_set(0);
+      ai_chat_ui_set_state(STATE_IDLE);
+      break;
     case CONVAI_STATUS_INTERRUPTED:
+      s_playback_flush = 1;
+      board_led_set(0);
+      ai_chat_ui_set_state(STATE_IDLE);
+      break;
     default:
       board_led_set(0);
       ai_chat_ui_set_state(STATE_IDLE);
@@ -200,10 +272,28 @@ static void on_audio(convai_engine_t engine, const void *data, size_t len,
     s[i * 2]     = m24[i];   /* L */
     s[i * 2 + 1] = m24[i];   /* R = L (单声道→立体声) */
   }
-  int w = codec->write(codec, st, (int)(n24 * 2 * sizeof(int16_t)));
+  size_t pcm_bytes = n24 * 2 * sizeof(int16_t);
+  if (s_playback_flush) {
+    s_playback_dropped += pcm_bytes;
+    return;
+  }
+  if (s_playback_rb != NULL && s_playback_task != NULL) {
+    if (xRingbufferSend(s_playback_rb, st, pcm_bytes, 0) != pdTRUE) {
+      s_playback_dropped += pcm_bytes;
+      if ((dl_cnt % 20) == 0) {
+        ESP_LOGW(TAG, "playback ring full, dropped=%u",
+                 (unsigned)s_playback_dropped);
+      }
+    }
+  } else {
+    int w = codec->write(codec, st, (int)pcm_bytes);
+    if (w < 0) {
+      ESP_LOGW(TAG, "downlink write failed (n24=%u)", (unsigned)n24);
+    }
+  }
   if ((dl_cnt % 20) == 0) {
-    ESP_LOGI(TAG, "downlink write: n8=%u n24=%u wrote=%d", (unsigned)n8,
-             (unsigned)n24, w);
+    ESP_LOGI(TAG, "downlink write: n8=%u n24=%u dropped=%u", (unsigned)n8,
+             (unsigned)n24, (unsigned)s_playback_dropped);
   }
 }
 
@@ -345,6 +435,7 @@ static void audio_capture_task(void *arg) {
   int hb_cnt = 0;
   int diag_cnt = 0;
   int rx_empty_cnt = 0;   /* 连续 received<=0 计数 (诊断) */
+  int rx_ok_logged = 0;
   while (g_started && g_engine != NULL) {
     int received = codec->read(codec, buf, CAPTURE_BUF_SIZE);
     if (received <= 0) {
@@ -356,18 +447,22 @@ static void audio_capture_task(void *arg) {
     } else {
       rx_empty_cnt = 0;
       /* 上行声道对齐 (TDM 4 时隙, ES7210) + 8kHz 重采样:
-       *   ES7210 在 TDM 4-slot 模式下时隙顺序为 MIC1, MIC3, MIC2, MIC4
-       *   (乐鑫 es7210 驱动 / xiaozhi Box 经验):
+       *   (实测播放时 slot1 幅值飙升至 9k+, 确认物理顺序为 MIC1, MIC3, MIC2, MIC4):
        *     slot0 = MIC1  (麦克风/人声)     → 左声道
        *     slot1 = MIC3  (扬声器回采/AEC)  → 右声道
        *     slot2 = MIC2  (另一路麦克风)    → 丢弃
        *     slot3 = MIC4  (未接)            → 丢弃
        *   4-slot 是为了保证 MCLK_256 整数分频 (256/64=4), 让 ES7210 收到
        *   正确的 BCLK/LRCK, RX 才有数据。
-       *   流程: 读 24k TDM → 取 slot0/slot1 → planar[L=MIC1][R=MIC3]@24k
+       *   流程: 读 24k TDM → 取 slot0(MIC1)/slot1(MIC3) → planar[L=MIC1][R=MIC3]@24k
        *         → 降采样到 8k → channels=2 A-law 编码 → L+R 一起上行。 */
       size_t tdm_frames = (size_t)received / (4 * sizeof(int16_t)); /* TDM 帧数@24k */
       if (tdm_frames > 0) {
+        if (!rx_ok_logged) {
+          rx_ok_logged = 1;
+          ESP_LOGI(TAG, "capture RX ok: bytes=%d tdm_frames=%u",
+                   received, (unsigned)tdm_frames);
+        }
         const int16_t *samples = (const int16_t *)buf;
         int16_t *planar        = (int16_t *)planar_buf;
         for (size_t i = 0; i < tdm_frames; i++) {
@@ -478,6 +573,7 @@ void convai_bridge_init(void) {
     return;
   }
   ESP_LOGI(TAG, "engine created (v%s)", convai_get_version());
+  playback_ring_init();
 }
 
 int convai_bridge_start(void) {

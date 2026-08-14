@@ -1,5 +1,6 @@
 #include "voice_config.h"
 #include "convai_api.h"  /* convai_update */
+#include "convai_bridge.h" /* startup config + engine access */
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <string.h>
@@ -139,8 +140,8 @@ const char *voice_config_get_type(void) {
 int voice_config_set(convai_engine_t engine, int voice_id) {
     if (voice_id < 0 || voice_id >= VOICE_COUNT) return -1;
 
+    int old_id = s_voice_id;
     s_voice_id = voice_id;
-    nvs_save_voice_id(voice_id);
     printf("[%s] set voice_id=%d -> %s\n", TAG,
            voice_id, s_voices[voice_id].name);
 
@@ -148,17 +149,31 @@ int voice_config_set(convai_engine_t engine, int voice_id) {
     char json[512];
     int n = voice_config_build_json(json, sizeof(json),
                                     "你的名字叫小荷，你可以帮小朋友解决小烦恼哦。");
-    if (n <= 0) return -1;
-
-    /* 运行时更新引擎（engine 可为 NULL，仅存储） */
-    if (engine) {
-        int ret = convai_update(engine, json);
-        if (ret != 0) {
-            printf("[%s] convai_update failed: %d\n", TAG, ret);
-            return -1;
-        }
-        printf("[%s] convai_update OK\n", TAG);
+    if (n <= 0) {
+        s_voice_id = old_id;
+        return -1;
     }
+
+    /* 参考 goldieos: 新配置总是先存到 bridge, 下次 start() 时使用 */
+    convai_bridge_set_startup_config(json);
+
+    /* 会话未连接时 SDK 的 convai_update 会返回 INVALID_STATE, 只保存配置 */
+    if (!convai_bridge_is_started()) {
+        printf("[%s] session not started, config saved for next connect\n", TAG);
+        nvs_save_voice_id(voice_id);
+        return 0;
+    }
+
+    /* 会话已连接: 立即通过 session.update 生效 */
+    int ret = convai_update(engine ? engine : convai_bridge_get_engine(), json);
+    if (ret != 0) {
+        printf("[%s] convai_update failed: %d\n", TAG, ret);
+        s_voice_id = old_id; /* 回滚, 与 goldieos restore_ai_config 一致 */
+        return -1;
+    }
+
+    nvs_save_voice_id(voice_id);
+    printf("[%s] convai_update OK\n", TAG);
 
     return 0;
 }

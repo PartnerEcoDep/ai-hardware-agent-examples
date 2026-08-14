@@ -12,14 +12,46 @@
 #include "audio_codec_lckfb.h"
 #include "board_init.h"
 #include "esp_log.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "audio_init";
 
-/** Default playback volume applied right after codec bring-up (%). */
-#define AUDIO_INIT_DEFAULT_VOLUME 70
-
 /* Codec selected by audio_init(); NULL until initialization succeeds. */
 static audio_codec_t *s_codec = NULL;
+
+/* Last applied hardware playback volume (%). */
+static uint8_t s_volume = AUDIO_VOLUME_DEFAULT;
+
+/* NVS namespace/key used to persist the hardware playback volume. */
+#define AUDIO_NVS_NAMESPACE "audio"
+#define AUDIO_NVS_VOLUME_KEY "volume"
+
+static uint8_t audio_volume_load(void) {
+  nvs_handle_t handle;
+  uint8_t volume = AUDIO_VOLUME_DEFAULT;
+  if (nvs_open(AUDIO_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
+    return volume;
+  }
+  if (nvs_get_u8(handle, AUDIO_NVS_VOLUME_KEY, &volume) != ESP_OK) {
+    volume = AUDIO_VOLUME_DEFAULT;
+  }
+  nvs_close(handle);
+  if (volume > AUDIO_VOLUME_MAX) {
+    volume = AUDIO_VOLUME_MAX;
+  }
+  return volume;
+}
+
+static void audio_volume_save(uint8_t volume) {
+  nvs_handle_t handle;
+  if (nvs_open(AUDIO_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) {
+    return;
+  }
+  nvs_set_u8(handle, AUDIO_NVS_VOLUME_KEY, volume);
+  nvs_commit(handle);
+  nvs_close(handle);
+}
 
 /* Power-amplifier enable callback wired into the codec init. */
 static void pa_enable_cb(int en, void *ctx) {
@@ -48,11 +80,12 @@ esp_err_t audio_init(void) {
 
   s_codec = codec;
 
-  /* Apply the default playback volume (legacy code set 70% here). */
-  err = codec->set_volume(codec, AUDIO_INIT_DEFAULT_VOLUME);
+  /* Restore the persisted hardware playback volume. */
+  s_volume = audio_volume_load();
+  err = codec->set_volume(codec, s_volume);
   if (err != ESP_OK) {
-    ESP_LOGW(TAG, "set default volume %d%% failed: %s",
-             AUDIO_INIT_DEFAULT_VOLUME, esp_err_to_name(err));
+    ESP_LOGW(TAG, "set restored volume %u%% failed: %s",
+             (unsigned)s_volume, esp_err_to_name(err));
   }
 
   ESP_LOGI(TAG, "audio subsystem ready (codec=%s)", codec->name);
@@ -60,3 +93,26 @@ esp_err_t audio_init(void) {
 }
 
 audio_codec_t *audio_codec_active(void) { return s_codec; }
+
+esp_err_t audio_set_volume(uint8_t pct) {
+  if (pct > AUDIO_VOLUME_MAX) {
+    pct = AUDIO_VOLUME_MAX;
+  }
+  if (s_codec == NULL || s_codec->set_volume == NULL) {
+    return ESP_ERR_INVALID_STATE;
+  }
+
+  esp_err_t err = s_codec->set_volume(s_codec, pct);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "set volume %u%% failed: %s",
+             (unsigned)pct, esp_err_to_name(err));
+    return err;
+  }
+
+  s_volume = pct;
+  audio_volume_save(pct);
+  ESP_LOGI(TAG, "hardware volume -> %u%%", (unsigned)pct);
+  return ESP_OK;
+}
+
+uint8_t audio_get_volume(void) { return s_volume; }

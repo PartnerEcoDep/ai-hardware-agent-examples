@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file ai_chat_ui.h
  * @brief AI Chat UI - Voice Assistant (LVGL 9.x)
  *
@@ -56,6 +56,9 @@ void ai_chat_ui_set_cloud(bool connected);
 /* convai_bridge_on_event handler — wired up in ai_chat_ui_init(). */
 void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info);
 void ai_chat_ui_update_volume(uint8_t level);
+/* Hardware playback volume controls (persisted by audio_init). */
+void ai_chat_ui_adjust_hw_volume(int8_t delta);
+void ai_chat_ui_sync_hw_volume(void);
 
 /* touch indicator — red dot at the touch point (coord text removed) */
 void ai_chat_ui_touch_indicator(int x, int y);

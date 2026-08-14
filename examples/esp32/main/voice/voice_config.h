@@ -47,7 +47,7 @@ int  voice_config_init(void);
 int  voice_config_get(void);
 const char *voice_config_get_type(void);
 
-/* 切换音色：存 NVS + 调 convai_update，engine 可为 NULL（仅存） */
+/* 切换音色：保存 NVS + bridge startup 配置；会话已连接时调 convai_update */
 int  voice_config_set(convai_engine_t engine, int voice_id);
 
 /* 生成完整 startup JSON（含 llm_config + tts_config） */

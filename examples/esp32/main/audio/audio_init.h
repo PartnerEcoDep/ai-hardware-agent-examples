@@ -28,6 +28,26 @@ esp_err_t audio_init(void);
  */
 audio_codec_t *audio_codec_active(void);
 
+/** Default hardware playback volume in percent. */
+#define AUDIO_VOLUME_DEFAULT 70U
+/** Minimum hardware playback volume in percent. */
+#define AUDIO_VOLUME_MIN 0U
+/** Maximum hardware playback volume in percent. */
+#define AUDIO_VOLUME_MAX 100U
+
+/**
+ * @brief Set hardware playback volume.
+ * @param pct Volume in percent, clamped to 0..100.
+ * @return ESP_OK on success.
+ */
+esp_err_t audio_set_volume(uint8_t pct);
+
+/**
+ * @brief Get the last applied hardware playback volume.
+ * @return Volume in percent, 0..100.
+ */
+uint8_t audio_get_volume(void);
+
 #ifdef __cplusplus
 }
 #endif

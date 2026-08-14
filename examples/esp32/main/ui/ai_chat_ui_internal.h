@@ -44,41 +44,12 @@ LV_FONT_DECLARE(lv_font_custom_cjk_16)
 #define ORB_CX  160
 #define ORB_CY  110
 
-/* ---- Per-state view sub-structures ---- */
+/* Reusable four-capsule visualization. Every voice state reuses the same four
+ * LVGL capsule objects and only changes their color and animation. This keeps
+ * the main screen to a single, bounded visual group. */
 typedef struct {
-  lv_obj_t *ring_outer;
-  lv_obj_t *ring_mid;
-  lv_obj_t *core;
-} idle_viz_t;
-
-typedef struct {
-  lv_obj_t *circle;
-  lv_obj_t *icon_mic;
-  lv_obj_t *icon_stand;
-  lv_obj_t *icon_base;
-  lv_obj_t *bars_l[5];
-  lv_obj_t *bars_r[5];
-  lv_anim_t anims_l[5];
-  lv_anim_t anims_r[5];
-} listening_viz_t;
-
-typedef struct {
-  lv_obj_t *circle;
-  lv_obj_t *icon_speaker;
-  lv_obj_t *wave_arcs[3];
-} speaking_viz_t;
-
-typedef struct {
-  lv_obj_t *circle;
-  lv_obj_t *spin_arc;
-  lv_obj_t *static_arc;
-} thinking_viz_t;
-
-typedef struct {
-  lv_obj_t *circle;
-  lv_obj_t *bar1;
-  lv_obj_t *bar2;
-} disconnected_viz_t;
+  lv_obj_t *capsules[4];       /* vertical capsules, shared by every state */
+} capsule_viz_t;
 
 typedef struct {
   lv_obj_t *panel;
@@ -101,17 +72,21 @@ typedef struct {
   int       timbre_idx;
 } voice_select_viz_t;
 
+/** Compact hardware volume control in the top bar. */
+typedef struct {
+  lv_obj_t *btn_minus;
+  lv_obj_t *label;
+  lv_obj_t *btn_plus;
+} volume_control_viz_t;
+
 /** The single shared UI model. */
 typedef struct {
   lv_obj_t *status_dot;
   lv_obj_t *status_label;
 
-  idle_viz_t         idle;
-  listening_viz_t    listening;
-  speaking_viz_t     speaking;
-  thinking_viz_t     thinking;
-  disconnected_viz_t disconnected;
+  capsule_viz_t      capsules;
   voice_select_viz_t voice_sel;
+  volume_control_viz_t volume_ctrl;
 
   lv_obj_t *state_label;
   lv_obj_t *hint_label;
@@ -133,11 +108,13 @@ void anim_init_bar(lv_anim_t *a, lv_obj_t *bar, int min_h,
 /* Animation callbacks (used by widget create/start functions). */
 void anim_pulse_centered_cb(void *var, int32_t v);
 void anim_pulse_opa_cb(void *var, int32_t v);
-void anim_bar_h_cb(void *var, int32_t v);
+void anim_bar_h_centered_cb(void *var, int32_t v);
 void anim_arc_rotate_cb(void *var, int32_t v);
+void anim_capsule_sway_x_cb(void *var, int32_t v);
 
 /* ---- Widget constructors / registrars (defined in widget files) ---- */
 void create_top_bar(void);
+void create_volume_control(void);
 void create_bottom_text(void);
 void create_float_ball(void);
 void on_screen_long_press(lv_event_t *e);
@@ -149,7 +126,7 @@ void state_viz_speaking_register(void);
 void state_viz_disconnected_register(void);
 void state_viz_voice_select_register(void);
 
-/* Voice-selector helpers (defined in widgets/state_viz_voice_select.c). */
+/* Voice-selector helpers (defined in widgets/state_viz.c). */
 
 /** Redraw the voice card for the current gender + timbre index. */
 void voice_sel_refresh_timbres(void);
@@ -159,6 +136,9 @@ void voice_sel_close(void);
 
 /** Register every state visualization (called once at init). */
 void state_viz_register_all(void);
+
+/** Hide every reusable capsule object (called before showing a new state). */
+void state_viz_hide_all(void);
 
 #ifdef __cplusplus
 }

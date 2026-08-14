@@ -2,14 +2,13 @@
  * @file ai_chat_ui.c
  * @brief Chat UI orchestrator: model, shared helpers, public API.
  *
- * This file owns the shared @c ui model, the per-state animation/scaffold
- * helpers used by every widget, the state-visualization factory registry,
- * and the public API (init / set_state / network / volume / touch). The
- * actual LVGL geometry for each state lives in its widget file under
- * widgets/ and is reached through the factory.
+ * This file owns the shared UI model, the per-state animation/scaffold
+ * helpers, the state-visualization factory registry, and the public API.
+ * The actual LVGL geometry for each state lives in widgets/state_viz.c.
  */
 
 #include "ai_chat_ui_internal.h"
+#include "audio_init.h"
 #include "convai_bridge.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -32,9 +31,12 @@ static void ai_chat_ui_apply_volume(void);
  *  Animation callbacks (shared by widget create/start functions)
  * =================================================================== */
 
-/** Animate size AND re-center (for orb-anchored objects). */
+/** Animate size and keep the object centered on the voice orb anchor. */
 void anim_pulse_centered_cb(void *var, int32_t v) {
   lv_obj_t *obj = (lv_obj_t *)var;
+  if (v & 1) {
+    v--;
+  }
   lv_obj_set_size(obj, v, v);
   lv_obj_set_pos(obj, ORB_CX - v / 2, ORB_CY - v / 2);
   lv_obj_set_style_radius(obj, v / 2, 0);
@@ -44,8 +46,10 @@ void anim_pulse_opa_cb(void *var, int32_t v) {
   lv_obj_set_style_opa((lv_obj_t *)var, v, 0);
 }
 
-void anim_bar_h_cb(void *var, int32_t v) {
-  lv_obj_set_height((lv_obj_t *)var, v);
+void anim_bar_h_centered_cb(void *var, int32_t v) {
+  lv_obj_t *bar = (lv_obj_t *)var;
+  lv_obj_set_height(bar, v);
+  lv_obj_set_y(bar, ORB_CY - v / 2);
 }
 
 void anim_arc_rotate_cb(void *var, int32_t v) {
@@ -73,7 +77,7 @@ void anim_init_bar(lv_anim_t *a, lv_obj_t *bar, int min_h,
                    int max_h, uint32_t dur) {
   lv_anim_init(a);
   lv_anim_set_var(a, bar);
-  lv_anim_set_exec_cb(a, anim_bar_h_cb);
+  lv_anim_set_exec_cb(a, anim_bar_h_centered_cb);
   lv_anim_set_values(a, min_h, max_h);
   lv_anim_set_duration(a, dur);
   lv_anim_set_playback_duration(a, dur);
@@ -84,9 +88,9 @@ void anim_init_bar(lv_anim_t *a, lv_obj_t *bar, int min_h,
 /* ===================================================================
  *  State-visualization factory
  * =================================================================== */
-/* CHAT_DISCONNECTED is the last chat_state_t entry, so the table indexed by
- * state covers every state. States without a viz (e.g. CHAT_INTERRUPTED)
- * simply stay NULL and fall back in ai_chat_ui_set_state(). */
+/* CHAT_DISCONNECTED is the last chat_state_t entry, so this table covers
+ * every state. States without a viz (CHAT_INTERRUPTED) stay NULL and fall
+ * back in ai_chat_ui_set_state(). */
 #define VIZ_TABLE_SIZE  (CHAT_DISCONNECTED + 1)
 
 static const state_viz_t *s_viz_table[VIZ_TABLE_SIZE];
@@ -124,40 +128,11 @@ void state_viz_register_all(void) {
  *  Visibility helper
  * =================================================================== */
 static void hide_all_viz(void) {
-  /* IMPORTANT: stop every running animation before hiding objects.
-   * Without this, the breathing/pulse/wave animations continue to
-   * mutate hidden widgets every few ms, flooding LVGL's invalid-area
-   * queue and driving lv_timer_handler from 5ms to 50-90ms per frame,
-   * which manifests as "界面卡死" within minutes. */
+  /* Stop every running animation before hiding the shared orb objects.
+   * Hidden breathing/wave bars would otherwise keep mutating every few ms
+   * and flood LVGL's invalid-area queue, making each frame very expensive. */
   lv_anim_delete_all();
-
-  hide_obj(ui.idle.ring_outer);
-  hide_obj(ui.idle.ring_mid);
-  hide_obj(ui.idle.core);
-  hide_obj(ui.listening.circle);
-  hide_obj(ui.listening.icon_mic);
-  hide_obj(ui.listening.icon_stand);
-  hide_obj(ui.listening.icon_base);
-  for (int i = 0; i < 5; i++) {
-    hide_obj(ui.listening.bars_l[i]);
-    hide_obj(ui.listening.bars_r[i]);
-  }
-  hide_obj(ui.speaking.circle);
-  hide_obj(ui.speaking.icon_speaker);
-  for (int i = 0; i < 3; i++) {
-    hide_obj(ui.speaking.wave_arcs[i]);
-  }
-  hide_obj(ui.thinking.circle);
-  hide_obj(ui.thinking.spin_arc);
-  hide_obj(ui.thinking.static_arc);
-  hide_obj(ui.disconnected.circle);
-  hide_obj(ui.disconnected.bar1);
-  hide_obj(ui.disconnected.bar2);
-  /* Voice-select panel: only hide the panel itself. All children are
-   * created as panel children, so they are invisible while the panel is
-   * hidden. We must NOT individually hide them, because set_state() only
-   * re-shows the panel -- individually-hidden children would stay invisible. */
-  hide_obj(ui.voice_sel.panel);
+  state_viz_hide_all();
 }
 
 /* ===================================================================
@@ -188,8 +163,8 @@ void create_bottom_text(void) {
 esp_err_t ai_chat_ui_init(void) {
   ESP_LOGI(TAG, "Creating Voice Assistant UI");
 
-  /* Must hold the lock: lvgl_task(CPU1) may be running lv_timer_handler;
-   * without the lock we race LVGL's internal state across cores. */
+  /* Hold the LVGL lock because lvgl_task (CPU1) may be running
+   * lv_timer_handler concurrently. */
   if (!lvgl_port_lock(pdMS_TO_TICKS(2000))) {
     ESP_LOGE(TAG, "init: failed to acquire LVGL lock");
     return ESP_FAIL;
@@ -198,8 +173,6 @@ esp_err_t ai_chat_ui_init(void) {
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, C_BG, 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  /* No scrollable content; prevents stray touch coords from being treated
-   * as drag gestures that push the whole screen off (the previous bug). */
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   state_viz_register_all();
@@ -214,10 +187,8 @@ esp_err_t ai_chat_ui_init(void) {
   create_bottom_text();
   create_float_ball();
 
-  /* Long-press anywhere opens the voice selector (backup for the ball). */
   lv_obj_add_event_cb(scr, on_screen_long_press, LV_EVENT_LONG_PRESSED, NULL);
 
-  /* Boot into IDLE. */
   hide_all_viz();
   const state_viz_t *idle = state_viz_factory_get(CHAT_IDLE);
   if (idle != NULL) {
@@ -232,9 +203,6 @@ esp_err_t ai_chat_ui_init(void) {
 
   lvgl_port_unlock();
 
-  /* Subscribe to SDK cloud events to drive the top-bar indicator.
-   * Done outside the LVGL lock — convai_bridge_on_event is just a
-   * pointer store. */
   convai_bridge_on_event(ai_chat_ui_on_cloud_event);
 
   ESP_LOGI(TAG, "UI ready");
@@ -242,8 +210,6 @@ esp_err_t ai_chat_ui_init(void) {
 }
 
 void ai_chat_ui_tick(void) {
-  /* LVGL timers are driven by lvgl_task (CPU1). Here we only apply any
-   * pending volume change queued by the audio-capture task. */
   ai_chat_ui_apply_volume();
 }
 
@@ -252,9 +218,6 @@ chat_state_t ai_chat_ui_get_state(void) {
 }
 
 void ai_chat_ui_set_state(chat_state_t state) {
-  /* Debounce: ignore rapid duplicate state changes within 300ms. SDK
-   * callbacks can fire IDLE->LISTENING->IDLE in quick succession, each
-   * triggering hide_all_viz + show + anim restart, burning LVGL CPU. */
   static TickType_t s_last_change = 0;
   TickType_t now = xTaskGetTickCount();
   if (state == s_state && state != CHAT_INTERRUPTED) {
@@ -266,7 +229,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
   }
   s_last_change = now;
 
-  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(500))) {
     ESP_LOGE(TAG, "set_state: failed to acquire LVGL lock");
     return;
   }
@@ -276,7 +239,7 @@ void ai_chat_ui_set_state(chat_state_t state) {
 
   const state_viz_t *viz = state_viz_factory_get(state);
   if (viz == NULL && state == CHAT_INTERRUPTED) {
-    viz = state_viz_factory_get(CHAT_IDLE); /* interrupted reuses idle */
+    viz = state_viz_factory_get(CHAT_IDLE);
   }
   if (viz) {
     if (viz->show) {
@@ -292,30 +255,39 @@ void ai_chat_ui_set_state(chat_state_t state) {
   const char *hint_text = "";
   switch (state) {
     case CHAT_IDLE:
-      state_color = C_GREEN; state_text = "Idle"; hint_text = "Tap to start";
+      state_color = C_GREEN;
+      state_text = "Idle";
+      hint_text = "Tap to start";
       break;
     case CHAT_LISTENING:
-      state_color = C_BLUE; state_text = "Listening"; hint_text = "Please wait";
+      state_color = C_BLUE;
+      state_text = "Listening";
+      hint_text = "Please wait";
       break;
     case CHAT_SPEAKING:
-      state_color = C_PURPLE; state_text = "AI speaking"; hint_text = "Playing";
+      state_color = C_PURPLE;
+      state_text = "AI speaking";
+      hint_text = "Playing";
       break;
     case CHAT_THINKING:
-      state_color = C_PURPLE; state_text = "Thinking";
+      state_color = C_PURPLE;
+      state_text = "Thinking";
       hint_text = "Generating...";
       break;
     case CHAT_DISCONNECTED:
-      state_color = C_RED; state_text = "Disconnected";
+      state_color = C_RED;
+      state_text = "Disconnected";
       hint_text = "Check network";
       break;
     case CHAT_INTERRUPTED:
-      state_color = C_TEXT_GRAY; state_text = "Interrupted"; hint_text = " ";
+      state_color = C_TEXT_GRAY;
+      state_text = "Interrupted";
+      hint_text = " ";
       break;
     case CHAT_VOICE_SELECT:
-      /* The full-screen voice panel already carries its own "Voice" title;
-       * leave the bottom state label empty so we don't draw a second
-       * overlapping "Voice" on top of the panel. */
-      state_color = C_BLUE; state_text = ""; hint_text = " ";
+      state_color = C_BLUE;
+      state_text = "";
+      hint_text = " ";
       break;
     default:
       break;
@@ -330,11 +302,11 @@ void ai_chat_ui_set_state(chat_state_t state) {
 }
 
 void ai_chat_ui_set_network(bool online) {
-  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(500))) {
     ESP_LOGE(TAG, "set_network: failed to acquire LVGL lock");
     return;
   }
-  lv_label_set_text(ui.status_label, online ? "Online" : "Offline");
+  lv_label_set_text(ui.status_label, online ? "Connected" : "Disconnected");
   lv_obj_set_style_bg_color(ui.status_dot, online ? C_GREEN : C_RED, 0);
   lvgl_port_unlock();
 }
@@ -345,8 +317,6 @@ void ai_chat_ui_set_connection(const char *ssid, const char *ip, bool online) {
   ai_chat_ui_set_network(online);
 }
 
-/* convai_bridge_on_event callback — drives the top-bar cloud indicator.
- * Mirrors goldieos' cloud_event_callback() pattern. */
 void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info) {
   (void)info;
   switch (code) {
@@ -363,36 +333,28 @@ void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info) {
   }
 }
 
-/* Cloud-side indicator (top-left dot + label), driven by SDK on_convai_event.
- * English labels per project convention. */
 void ai_chat_ui_set_cloud(bool connected) {
-  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(500))) {
     ESP_LOGE(TAG, "set_cloud: failed to acquire LVGL lock");
     return;
   }
-  lv_label_set_text(ui.status_label, connected ? "\xE2\x97\x8F Online"
-                                               : "\xE2\x97\x8F Offline");
-  lv_obj_set_style_bg_color(ui.status_dot, connected ? C_GREEN : C_TEXT_GRAY, 0);
+  lv_label_set_text(ui.status_label, connected ? "Connected" : "Disconnected");
+  lv_obj_set_style_bg_color(ui.status_dot,
+                            connected ? C_GREEN : C_TEXT_GRAY, 0);
   lvgl_port_unlock();
 }
 
 void ai_chat_ui_update_volume(uint8_t level) {
-  /* Decoupled from LVGL: the audio-capture task (priority 5) calls this
-   * every ~10ms. Storing the level + flag avoids taking the LVGL lock from
-   * the audio context (which raced lvgl_task). The actual UI update is
-   * applied later from ai_chat_ui_tick() on the low-priority main loop. */
   s_volume = level;
   s_vol_dirty = true;
 }
 
-/* Apply a pending volume change under the LVGL lock. Called from the main
- * loop (ai_chat_ui_tick), never from the high-priority audio task. */
 static void ai_chat_ui_apply_volume(void) {
   if (!s_vol_dirty) {
     return;
   }
-  if (!lvgl_port_lock(pdMS_TO_TICKS(50))) {
-    return; /* LVGL busy; retry on next tick */
+  if (!lvgl_port_lock(pdMS_TO_TICKS(200))) {
+    return;
   }
   s_vol_dirty = false;
 
@@ -401,20 +363,49 @@ static void ai_chat_ui_apply_volume(void) {
     return;
   }
 
-  /* shape: small/medium/large/medium/small to mimic a bar envelope */
-  static const int factor[5] = {30, 70, 100, 80, 40};
-  int base = 4 + (s_volume * 22 / 100); /* 4..26 */
-  if (base > 26) {
-    base = 26;
+  static const int factor[4] = {60, 85, 100, 80};
+  int amp = 3 + (s_volume * 3 / 100);
+  if (amp > 6) {
+    amp = 6;
   }
 
-  for (int i = 0; i < 5; i++) {
-    int h = base * factor[i] / 100;
-    if (h < 4) h = 4;
-    if (h > 28) h = 28;
-    lv_anim_set_values(&ui.listening.anims_l[i], 4, h);
-    lv_anim_set_values(&ui.listening.anims_r[i], 4, h);
+  for (int i = 0; i < 4; i++) {
+    int a_amp = amp * factor[i] / 100;
+    if (a_amp < 2) {
+      a_amp = 2;
+    }
+    lv_anim_t *a = lv_anim_get(ui.capsules.capsules[i],
+                              anim_capsule_sway_x_cb);
+    if (a != NULL) {
+      lv_anim_set_values(a, -a_amp, a_amp);
+    }
   }
+  lvgl_port_unlock();
+}
+
+void ai_chat_ui_sync_hw_volume(void) {
+  if (ui.volume_ctrl.label != NULL) {
+    lv_label_set_text_fmt(ui.volume_ctrl.label, "%u%%",
+                           (unsigned)audio_get_volume());
+  }
+}
+
+void ai_chat_ui_adjust_hw_volume(int8_t delta) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(500))) {
+    ESP_LOGE(TAG, "adjust_hw_volume: failed to acquire LVGL lock");
+    return;
+  }
+
+  int new_volume = (int)audio_get_volume() + (int)delta;
+  if (new_volume < (int)AUDIO_VOLUME_MIN) {
+    new_volume = (int)AUDIO_VOLUME_MIN;
+  }
+  if (new_volume > (int)AUDIO_VOLUME_MAX) {
+    new_volume = (int)AUDIO_VOLUME_MAX;
+  }
+
+  audio_set_volume((uint8_t)new_volume);
+  ai_chat_ui_sync_hw_volume();
   lvgl_port_unlock();
 }
 
@@ -431,7 +422,6 @@ void ai_chat_ui_show_voice_selector(bool show) {
   voice_select_viz_t *vs = &ui.voice_sel;
 
   if (show) {
-    /* load current voice and resolve gender/timbre */
     int vid = voice_factory_current_id();
     voice_gender_t g = voice_factory_get_gender(vid);
     int tcnt = voice_factory_gender_voice_count(g);
@@ -469,8 +459,7 @@ int ai_chat_ui_voice_select_get(void) {
 }
 
 /* ===================================================================
- *  Touch indicator + swipe (called from lvgl_port touch_read_cb, which
- *  runs inside lvgl_task's LVGL lock; no extra lock needed here).
+ *  Touch indicator + swipe
  * =================================================================== */
 void ai_chat_ui_touch_indicator(int x, int y) {
   if (!ui.touch_dot) {
@@ -495,16 +484,15 @@ void ai_chat_ui_touch_indicator_hide(void) {
   }
 }
 
-#define SWIPE_THRESHOLD  40   /* min horizontal pixels for a swipe */
+#define SWIPE_THRESHOLD  40
 
 void ai_chat_ui_touch_swipe(int x, int y, bool pressed) {
   static bool s_tracking = false;
-  static int  s_start_x = 0;
-  static int  s_start_y = 0;
-  static int  s_last_x = 0;
-  static int  s_last_y = 0;
+  static int s_start_x = 0;
+  static int s_start_y = 0;
+  static int s_last_x = 0;
+  static int s_last_y = 0;
 
-  /* Only track when in voice-select mode. */
   if (s_state != CHAT_VOICE_SELECT) {
     s_tracking = false;
     return;
@@ -524,7 +512,6 @@ void ai_chat_ui_touch_swipe(int x, int y, bool pressed) {
     int dx = s_last_x - s_start_x;
     int dy = s_last_y - s_start_y;
 
-    /* Horizontal swipe: |dx| > threshold and |dx| > 2*|dy|. */
     if (dx > SWIPE_THRESHOLD && (dx > 2 * (dy > 0 ? dy : -dy))) {
       voice_select_viz_t *vs = &ui.voice_sel;
       vs->timbre_idx = (vs->timbre_idx - 1 + vs->timbre_count) %

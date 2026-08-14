@@ -84,6 +84,7 @@ idf_component_register(
         esp_netif
         esp_event
         esp_timer
+        esp_ringbuf             # Downlink playback ring buffer
         esp_http_server
         esp_https_ota
         driver

@@ -87,17 +87,6 @@ int audio_lckfb_set_volume(audio_lckfb_t *audio, int vol);
 int audio_lckfb_set_mic_gain(audio_lckfb_t *audio, int gain_db);
 
 /**
- * @brief 滴答声测试 — 通过 I2S TX 写一段 1kHz 方波, 验证 TX 物理链路
- *
- * 调用前需要 audio_lckfb_init() 成功 (TX 通道已 enable)。
- * 频率固定 1kHz, 时长默认 300ms, 立体声 L=R 同步输出。
- *
- * @param freq_hz     频率 (Hz), 100~4000
- * @param duration_ms 时长 (ms), 50~2000
- */
-void audio_lckfb_test_tone(int freq_hz, int duration_ms);
-
-/**
  * @brief 本板 codec 的抽象实例 (audio_codec_t 适配层)
  *
  * 硬件句柄由实现文件内部持有, 调用方只通过 audio_codec_t 的函数指针访问。
