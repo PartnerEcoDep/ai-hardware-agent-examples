@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <esp_log.h>
 
 #define TAG "sdk_stub"
 
@@ -122,10 +123,13 @@ int convai_send_audio(convai_engine_t handle,
     static int audio_count = 0;
     audio_count++;
     if (audio_count == 1) {
-        printf("[%s] convai_send_audio() — streaming active (%zu bytes/frame)\n", TAG, data_len);
+        ESP_LOGI(TAG, "convai_send_audio() — streaming active (%zu bytes/frame)", data_len);
     }
-    if (audio_count % 100 == 0) {
-        printf("[%s] convai_send_audio() — %d frames sent\n", TAG, audio_count);
+    /* Throttle to every 500 frames (~5s @ 20ms frames) to avoid spamming
+     * the shared stdout mutex and starving ESP_LOGI output from other tasks
+     * (which previously made the UI look "frozen" when logs went silent). */
+    if (audio_count % 500 == 0) {
+        ESP_LOGI(TAG, "convai_send_audio() — %d frames sent", audio_count);
     }
     return CONVAI_OK;
 }

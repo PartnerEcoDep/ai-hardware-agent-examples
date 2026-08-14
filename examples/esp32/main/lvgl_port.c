@@ -34,8 +34,8 @@ static const char *TAG = "lvgl_port";
  * =================================================================== */
 #define LCD_H_RES  320
 #define LCD_V_RES  240
-#define BUF_LINES  40  /* 每次刷新 40 行 */
-#define BUF_SIZE   (LCD_H_RES * BUF_LINES * sizeof(lv_color_t))  /* 25600 bytes */
+#define BUF_LINES  LCD_V_RES  /* full-frame buffer: one flush per frame */
+#define BUF_SIZE   (LCD_H_RES * BUF_LINES * sizeof(lv_color_t))  /* 153600 bytes */
 
 static lv_color_t *s_buf1 = NULL;
 static lv_color_t *s_buf2 = NULL;
@@ -78,14 +78,25 @@ static void lvgl_task(void *arg)
     (void)arg;
     uint32_t hb_cnt = 0;
     while (1) {
-        if (lvgl_port_lock(pdMS_TO_TICKS(20))) {
+        TickType_t t0 = xTaskGetTickCount();
+        bool got_lock = lvgl_port_lock(pdMS_TO_TICKS(20));
+        if (got_lock) {
             lv_timer_handler();
             lvgl_port_unlock();
+        } else {
+            ESP_LOGW(TAG, "lvgl lock timeout (>20ms) — main loop or other task holding it");
+        }
+        TickType_t t1 = xTaskGetTickCount();
+        uint32_t elapsed = (t1 - t0) * portTICK_PERIOD_MS;
+        if (elapsed > 50) {
+            ESP_LOGW(TAG, "lvgl_timer_handler slow: %u ms (one frame should be <5ms)", (unsigned)elapsed);
         }
         vTaskDelay(pdMS_TO_TICKS(5));
 
-        /* Heartbeat every ~30s to confirm lvgl_task is alive */
-        if (++hb_cnt >= 6000) {
+        /* Heartbeat every ~10s (2000 x 5ms) to confirm lvgl_task is alive
+         * and capture stack HWM.  Frequency raised from 30s → 10s so that
+         * "界面卡死" incidents leave a fresh log entry right before stall. */
+        if (++hb_cnt >= 2000) {
             hb_cnt = 0;
             ESP_LOGI(TAG, "lvgl heartbeat: free_heap=%u, stack_hwm=%u",
                      (unsigned)esp_get_free_heap_size(),
@@ -138,7 +149,7 @@ int lvgl_port_init(void)
     lv_display_t *disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     lv_display_set_flush_cb(disp, disp_flush_cb);
     lv_display_set_buffers(disp, s_buf1, s_buf2, BUF_SIZE,
-                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+                           LV_DISPLAY_RENDER_MODE_FULL);
 
     /* 4. Tick 定时器 — 1ms */
     const esp_timer_create_args_t timer_args = {
