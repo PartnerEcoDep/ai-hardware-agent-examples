@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file ai_chat_ui.c
  * @brief Chat UI orchestrator: model, shared helpers, public API.
  *
@@ -12,6 +12,7 @@
 #include "convai_bridge.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -209,8 +210,46 @@ esp_err_t ai_chat_ui_init(void) {
   return ESP_OK;
 }
 
+/* 右上角状态统计: 每 ~1s 刷新一次 RAM 空闲堆与上行丢包率。
+ * main 主循环以 50ms 间隔调用 ai_chat_ui_tick(), 累计 20 次即 1s。 */
+#define STATS_REFRESH_TICKS 20
+
+static void ai_chat_ui_update_stats(void) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+    return;
+  }
+
+  unsigned int sent = 0;
+  unsigned int dropped = 0;
+  int have_stats = (convai_bridge_get_uplink_stats(&sent, &dropped) == 0);
+
+  if (ui.ram_label != NULL) {
+    uint32_t total = heap_caps_get_total_size(MALLOC_CAP_8BIT);
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t used = (total > free_heap) ? (total - free_heap) : 0;
+    lv_label_set_text_fmt(ui.ram_label, "Use %uKB",
+                          (unsigned int)(used / 1024));
+  }
+  if (ui.loss_label != NULL) {
+    if (have_stats && (sent + dropped) > 0) {
+      unsigned int pct = (unsigned int)((uint64_t)dropped * 100 /
+                                        (sent + dropped));
+      lv_label_set_text_fmt(ui.loss_label, "Loss %u%%", pct);
+    } else {
+      lv_label_set_text(ui.loss_label, "Loss -");
+    }
+  }
+
+  lvgl_port_unlock();
+}
+
 void ai_chat_ui_tick(void) {
   ai_chat_ui_apply_volume();
+  static uint32_t s_stats_cnt = 0;
+  if (++s_stats_cnt >= STATS_REFRESH_TICKS) {
+    s_stats_cnt = 0;
+    ai_chat_ui_update_stats();
+  }
 }
 
 chat_state_t ai_chat_ui_get_state(void) {

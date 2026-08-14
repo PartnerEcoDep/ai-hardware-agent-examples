@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file convai_bridge.c
  * @brief ESP32 implementation of the convai_bridge API.
  *
@@ -61,7 +61,7 @@ static volatile int          s_capture_running = 0;
 /* Downlink playback ring buffer. The SDK audio callback only enqueues decoded
  * PCM here; a dedicated high-priority task drains it to the codec, smoothing
  * network/decoding jitter and keeping the I2S driver fed at its own pace. */
-#define PLAYBACK_RING_SIZE (48 * 1024)
+#define PLAYBACK_RING_SIZE (128 * 1024)
 #define PLAYBACK_READ_CHUNK 1024
 #define PLAYBACK_POLL_MS 10
 static RingbufHandle_t s_playback_rb = NULL;
@@ -354,38 +354,6 @@ static uint8_t compute_audio_level(const uint8_t *g711a, size_t n) {
  * = AUDIO_SAMPLE_RATE * 4 * 2 / 50 (按字节计)。 */
 #define CAPTURE_BUF_SIZE (AUDIO_SAMPLE_RATE * 4 * 2 / 50)
 
-/* 诊断: 每隔 N 帧打印一次各 TDM slot 的平均绝对幅值(MAV), 用于验证时隙顺序。
- * 回采(MIC3)在扬声器播放时幅值应显著升高, 静音时接近 0。纯整数运算。
- * 调低到 25 帧 (~0.5s) 便于快速确认 RX 是否有数据。 */
-#define DIAG_LOG_INTERVAL  25
-
-static void log_slot_energy(const int16_t *samples, size_t tdm_frames) {
-  if (tdm_frames == 0) return;
-  int64_t e0 = 0, e1 = 0, e2 = 0, e3 = 0;
-  for (size_t i = 0; i < tdm_frames; i++) {
-    int64_t s0 = samples[i * 4 + 0];
-    int64_t s1 = samples[i * 4 + 1];
-    int64_t s2 = samples[i * 4 + 2];
-    int64_t s3 = samples[i * 4 + 3];
-    if (s0 < 0) s0 = -s0;
-    if (s1 < 0) s1 = -s1;
-    if (s2 < 0) s2 = -s2;
-    if (s3 < 0) s3 = -s3;
-    e0 += s0;
-    e1 += s1;
-    e2 += s2;
-    e3 += s3;
-  }
-  /* MAV 平均绝对幅值: 16-bit 样本均值在 0~32767, unsigned 足够。
-   * 用 %u 避免 nano newlib 不支持 %llu 的问题。
-   * 4-slot 顺序: slot0=MIC1, slot1=MIC3 回采, slot2=MIC2, slot3=MIC4(未接)。 */
-  ESP_LOGI(TAG, "TDM slot MAV: slot0(MIC1)=%u  slot1(MIC3 回采)=%u  slot2(MIC2)=%u  slot3(MIC4)=%u",
-           (unsigned)(e0 / (int64_t)tdm_frames),
-           (unsigned)(e1 / (int64_t)tdm_frames),
-           (unsigned)(e2 / (int64_t)tdm_frames),
-           (unsigned)(e3 / (int64_t)tdm_frames));
-}
-
 static void audio_capture_task(void *arg) {
   (void)arg;
   audio_codec_t *codec = audio_codec_active();
@@ -433,7 +401,6 @@ static void audio_capture_task(void *arg) {
   }
 
   int hb_cnt = 0;
-  int diag_cnt = 0;
   int rx_empty_cnt = 0;   /* 连续 received<=0 计数 (诊断) */
   int rx_ok_logged = 0;
   while (g_started && g_engine != NULL) {
@@ -502,11 +469,6 @@ static void audio_capture_task(void *arg) {
               s_frames_dropped++;
             }
           }
-        }
-        /* 诊断: 周期性打印各 slot RMS, 验证 slot1 是否为回采 */
-        if (++diag_cnt >= DIAG_LOG_INTERVAL) {
-          diag_cnt = 0;
-          log_slot_energy(samples, tdm_frames);
         }
       } else {
         s_frames_dropped++;

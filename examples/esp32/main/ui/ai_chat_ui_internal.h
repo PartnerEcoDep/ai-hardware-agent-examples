@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file ai_chat_ui_internal.h
  * @brief Shared model + helpers for the chat UI widgets.
  *
@@ -83,8 +83,9 @@ typedef struct {
 typedef struct {
   lv_obj_t *status_dot;
   lv_obj_t *status_label;
-
   capsule_viz_t      capsules;
+  lv_obj_t *loss_label;   /* top-right: uplink packet loss (%) */
+  lv_obj_t *ram_label;    /* bottom-left: free heap (KB) */
   voice_select_viz_t voice_sel;
   volume_control_viz_t volume_ctrl;
 

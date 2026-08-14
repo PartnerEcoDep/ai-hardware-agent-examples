@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file widgets/top_bar.c
  * @brief Status bar at the top of the chat screen (y 0..40).
  *
@@ -76,10 +76,15 @@ void create_top_bar(void) {
 
   create_volume_control();
 
-  /* Plain text on purpose: the CJK font carries no FontAwesome glyphs. */
-  lv_obj_t *wifi_icon = lv_label_create(lv_screen_active());
-  lv_label_set_text(wifi_icon, "WiFi");
-  lv_obj_set_style_text_color(wifi_icon, C_TEXT, 0);
-  lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_14, 0);
-  lv_obj_align(wifi_icon, LV_ALIGN_TOP_RIGHT, -8, 10);
+  /* Top-right: uplink packet loss rate. Bottom-left: RAM usage. */
+  ui.loss_label = lv_label_create(lv_screen_active());
+  lv_label_set_text(ui.loss_label, "Loss -");
+  lv_obj_set_style_text_color(ui.loss_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(ui.loss_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(ui.loss_label, LV_ALIGN_TOP_RIGHT, -8, 6);
+  ui.ram_label = lv_label_create(lv_screen_active());
+  lv_label_set_text(ui.ram_label, "Use -");
+  lv_obj_set_style_text_color(ui.ram_label, C_TEXT_GRAY, 0);
+  lv_obj_set_style_text_font(ui.ram_label, &lv_font_montserrat_14, 0);
+  lv_obj_align(ui.ram_label, LV_ALIGN_BOTTOM_LEFT, 8, -8);
 }

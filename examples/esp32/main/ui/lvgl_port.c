@@ -96,12 +96,12 @@ static void lvgl_task(void *arg)
         }
         TickType_t t1 = xTaskGetTickCount();
         uint32_t elapsed = (t1 - t0) * portTICK_PERIOD_MS;
-        vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(10));
 
-        /* Heartbeat every ~10s (2000 x 5ms) to confirm lvgl_task is alive
+        /* Heartbeat every ~10s (1000 x 10ms) to confirm lvgl_task is alive
          * and capture stack HWM.  Frequency raised from 30s → 10s so that
          * "界面卡死" incidents leave a fresh log entry right before stall. */
-        if (++hb_cnt >= 2000) {
+        if (++hb_cnt >= 1000) {
             hb_cnt = 0;
             ESP_LOGI(TAG, "lvgl heartbeat: free_heap=%u, stack_hwm=%u",
                      (unsigned)esp_get_free_heap_size(),
@@ -180,7 +180,10 @@ int lvgl_port_init(void)
                           true,                      /* 深色主题 */
                           &lv_font_montserrat_14);  /* 默认字体 */
 
-    /* 7. LVGL 任务 — 5ms 周期驱动事件循环，钉 CPU1 */
+    /* 7. LVGL 任务 — 10ms 周期驱动事件循环，钉 CPU1。
+     * 周期从 5ms 放宽到 10ms 以降低渲染 CPU 压力；动画帧率受 SPI
+     * 带宽限制（ST7789 320x240 全刷 ~ 12ms/帧），10ms 周期实际
+     * 不影响视觉流畅度。 */
     xTaskCreatePinnedToCore(lvgl_task, "lvgl", 24576, NULL, 5, &s_lvgl_task_handle, 1);
 
     ESP_LOGI(TAG, "LVGL ready (display %dx%d)", LCD_H_RES, LCD_V_RES);
