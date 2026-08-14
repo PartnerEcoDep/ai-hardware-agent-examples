@@ -10,6 +10,8 @@ idf_component_register(
         "wifi_provisioning.cpp"
         "lcd_ui.c"
         "wifi_prov_ui.c"
+        "ai_chat_ui.c"
+        "voice_config.c"
     INCLUDE_DIRS
         "."
         "${CMAKE_SOURCE_DIR}/../../include/convai"

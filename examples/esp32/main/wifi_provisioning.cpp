@@ -42,6 +42,7 @@ static const char *TAG = "wifi_prov";
 #define WIFI_PROV_CONFIG_EXIT_BIT BIT1
 
 static EventGroupHandle_t s_wifi_event_group = NULL;
+static wifi_prov_callback_t s_callback = NULL;
 
 /* ---- WifiManager 事件回调 ---- */
 static void wifi_prov_event_callback(WifiEvent event, const std::string& data) {
@@ -51,10 +52,12 @@ static void wifi_prov_event_callback(WifiEvent event, const std::string& data) {
         if (s_wifi_event_group) {
             xEventGroupSetBits(s_wifi_event_group, WIFI_PROV_CONNECTED_BIT);
         }
+        if (s_callback) s_callback(WIFI_PROV_EV_CONNECTED);
         break;
 
     case WifiEvent::Disconnected:
         ESP_LOGW(TAG, "WiFi disconnected: %s", data.c_str());
+        if (s_callback) s_callback(WIFI_PROV_EV_DISCONNECTED);
         break;
 
     case WifiEvent::ConfigModeEnter:
@@ -79,6 +82,10 @@ static void wifi_prov_event_callback(WifiEvent event, const std::string& data) {
 }
 
 /* ---- 公开 C API 实现 ---- */
+
+void wifi_prov_register_callback(wifi_prov_callback_t cb) {
+    s_callback = cb;
+}
 
 int wifi_prov_init(void) {
     if (s_wifi_event_group != NULL) {
