@@ -47,6 +47,10 @@ void ai_chat_ui_set_connection(const char *ssid, const char *ip,
                                bool online);
 void ai_chat_ui_update_volume(uint8_t level);
 
+/* touch indicator — red dot at the touch point (coord text removed) */
+void ai_chat_ui_touch_indicator(int x, int y);
+void ai_chat_ui_touch_indicator_hide(void);
+
 /* legacy no-op stubs */
 void ai_chat_ui_add_message(const char *text, bool is_user);
 void ai_chat_ui_show_voice_selector(bool show);

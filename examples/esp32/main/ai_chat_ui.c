@@ -11,18 +11,21 @@
 
 #include "ai_chat_ui.h"
 #include "voice_config.h"
+#include "lvgl_port.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lvgl.h"
+LV_FONT_DECLARE(lv_font_custom_cjk_14);
+LV_FONT_DECLARE(lv_font_custom_cjk_16);
+
 
 static const char *TAG = "ai_chat_ui";
-
-#define FONT_CJK_16  (&lv_font_source_han_sans_sc_16_cjk)
-#define FONT_CJK_14  (&lv_font_source_han_sans_sc_14_cjk)
 
 /* color palette (dark theme) */
 #define C_BG          lv_color_hex(0x000000)
@@ -104,19 +107,17 @@ static struct {
   lv_obj_t *state_label;
   lv_obj_t *hint_label;
   lv_obj_t *float_ball;
-  lv_obj_t *float_ball_label;
+  lv_obj_t *float_ball_lines[3];  /* hamburger menu icon */
+  lv_obj_t *touch_dot;            /* touch indicator red dot */
 } ui;
 
 static chat_state_t s_state = CHAT_IDLE;
 static uint8_t s_volume = 0;
+static volatile bool s_vol_dirty = false;
 
 /* ===================================================================
  *  animation callbacks
  * =================================================================== */
-
-static void anim_pulse_size_cb(void *var, int32_t v) {
-  lv_obj_set_size((lv_obj_t *)var, v, v);
-}
 
 /* animate size AND re-center (for orb-anchored objects) */
 static void anim_pulse_centered_cb(void *var, int32_t v) {
@@ -188,7 +189,7 @@ static void create_top_bar(void) {
   lv_label_set_text(wifi_icon, "WiFi");
   lv_obj_set_pos(wifi_icon, 290, 10);
   lv_obj_set_style_text_color(wifi_icon, C_TEXT, 0);
-  lv_obj_set_style_text_font(wifi_icon, FONT_CJK_14, 0);
+  lv_obj_set_style_text_font(wifi_icon, &lv_font_montserrat_14, 0);
 }
 
 /* ===================================================================
@@ -747,6 +748,14 @@ static void create_voice_select_viz(void) {
  *  float ball (voice settings entry, always visible)
  * =================================================================== */
 
+/* long-press on the screen background -> open voice selector */
+static void on_screen_long_press(lv_event_t *e) {
+  (void)e;
+  if (s_state == CHAT_VOICE_SELECT) return;
+  ai_chat_ui_show_voice_selector(true);
+  ai_chat_ui_set_state(CHAT_VOICE_SELECT);
+}
+
 static void on_float_ball_click(lv_event_t *e) {
   (void)e;
   if (s_state == CHAT_VOICE_SELECT) {
@@ -761,8 +770,11 @@ static void on_float_ball_click(lv_event_t *e) {
 }
 
 static void create_float_ball(void) {
-  const int size = 28;
-  const int x = 282, y = 200;
+  /* A normal-sized 56x56 floating ball in the bottom-right corner,
+   * acting as the voice-settings entry. */
+  const int size = 56;
+  const int x = 320 - size - 12;   /* 252 */
+  const int y = 240 - size - 12;   /* 172 */
 
   ui.float_ball = lv_obj_create(lv_screen_active());
   lv_obj_set_size(ui.float_ball, size, size);
@@ -779,13 +791,18 @@ static void create_float_ball(void) {
   lv_obj_add_event_cb(ui.float_ball, on_float_ball_click,
                       LV_EVENT_CLICKED, NULL);
 
-  /* gear icon: "?" */
-  ui.float_ball_label = lv_label_create(ui.float_ball);
-  lv_label_set_text(ui.float_ball_label, LV_SYMBOL_SETTINGS);
-  lv_obj_set_style_text_color(ui.float_ball_label, C_TEXT, 0);
-  lv_obj_set_style_text_font(ui.float_ball_label,
-                             &lv_font_montserrat_14, 0);
-  lv_obj_center(ui.float_ball_label);
+  /* hamburger menu icon: 3 short bars centered in the ball */
+  for (int i = 0; i < 3; i++) {
+    ui.float_ball_lines[i] = lv_obj_create(ui.float_ball);
+    lv_obj_set_size(ui.float_ball_lines[i], 28, 3);
+    lv_obj_set_pos(ui.float_ball_lines[i], 14, 16 + i * 11);
+    lv_obj_set_style_bg_color(ui.float_ball_lines[i], C_TEXT, 0);
+    lv_obj_set_style_bg_opa(ui.float_ball_lines[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(ui.float_ball_lines[i], 0, 0);
+    lv_obj_set_style_radius(ui.float_ball_lines[i], 1, 0);
+    lv_obj_set_style_pad_all(ui.float_ball_lines[i], 0, 0);
+    lv_obj_remove_flag(ui.float_ball_lines[i], LV_OBJ_FLAG_CLICKABLE);
+  }
 }
 
 /* ===================================================================
@@ -795,9 +812,19 @@ static void create_float_ball(void) {
 void ai_chat_ui_init(void) {
   ESP_LOGI(TAG, "Creating Voice Assistant UI");
 
+  /* 必须持锁：lvgl_task(CPU1) 同时可能在跑 lv_timer_handler，
+   * 不加锁会跨核竞争 LVGL 内部状态，导致死循环/卡死。 */
+  if (!lvgl_port_lock(pdMS_TO_TICKS(2000))) {
+    ESP_LOGE(TAG, "init: failed to acquire LVGL lock");
+    return;
+  }
+
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, C_BG, 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  /* 本 UI 无可滚动内容；禁止滚动，避免任何异常触摸坐标被 LVGL
+   * 当成拖拽手势把整屏推偏（此前乱码坐标即导致画面被拖到右）。 */
+  lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   create_top_bar();
   create_idle_viz();
@@ -809,17 +836,27 @@ void ai_chat_ui_init(void) {
   create_voice_select_viz();
   create_float_ball();
 
+  /* Long-press anywhere on the screen (1.5s) opens the voice
+   * selector. Backup for when the user can't hit the small float ball. */
+  lv_obj_add_event_cb(scr, on_screen_long_press, LV_EVENT_LONG_PRESSED, NULL);
+
   hide_all_viz();
   show_obj(ui.idle.ring_outer);
   show_obj(ui.idle.ring_mid);
   show_obj(ui.idle.core);
   s_state = CHAT_IDLE;
 
+  lvgl_port_unlock();
   ESP_LOGI(TAG, "UI ready");
 }
 
+/* Forward declaration: defined later in this file. */
+static void ai_chat_ui_apply_volume(void);
+
 void ai_chat_ui_tick(void) {
-  lv_timer_handler();
+  /* LVGL timers are already driven by lvgl_task (CPU1). Here we only apply
+   * any pending volume change that was queued by the audio capture task. */
+  ai_chat_ui_apply_volume();
 }
 
 chat_state_t ai_chat_ui_get_state(void) {
@@ -828,6 +865,10 @@ chat_state_t ai_chat_ui_get_state(void) {
 
 void ai_chat_ui_set_state(chat_state_t state) {
   if (state == s_state && state != CHAT_INTERRUPTED) return;
+  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+    ESP_LOGE(TAG, "set_state: failed to acquire LVGL lock");
+    return;
+  }
   s_state = state;
 
   hide_all_viz();
@@ -912,11 +953,17 @@ void ai_chat_ui_set_state(chat_state_t state) {
   lv_label_set_text(ui.state_label, state_text);
   lv_obj_set_style_text_color(ui.state_label, state_color, 0);
   lv_label_set_text(ui.hint_label, hint_text);
+  lvgl_port_unlock();
 }
 
 void ai_chat_ui_set_network(bool online) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+    ESP_LOGE(TAG, "set_network: failed to acquire LVGL lock");
+    return;
+  }
   lv_label_set_text(ui.status_label, online ? "Online" : "Offline");
   lv_obj_set_style_bg_color(ui.status_dot, online ? C_GREEN : C_RED, 0);
+  lvgl_port_unlock();
 }
 
 void ai_chat_ui_set_connection(const char *ssid, const char *ip,
@@ -927,12 +974,32 @@ void ai_chat_ui_set_connection(const char *ssid, const char *ip,
 }
 
 void ai_chat_ui_update_volume(uint8_t level) {
+  /* Decoupled from LVGL: the audio capture task (priority 5) calls this
+   * every ~10ms. Storing the level + flag here avoids taking the LVGL lock
+   * from the audio context, which raced with lvgl_task and triggered the
+   * "failed to acquire LVGL lock" errors. The actual UI update is applied
+   * later from ai_chat_ui_tick() on the low-priority main loop. */
   s_volume = level;
-  if (s_state != CHAT_LISTENING) return;
+  s_vol_dirty = true;
+}
+
+/* Apply a pending volume change under the LVGL lock. Called from the main
+ * loop (ai_chat_ui_tick), never from the high-priority audio task. */
+static void ai_chat_ui_apply_volume(void) {
+  if (!s_vol_dirty) return;
+  if (!lvgl_port_lock(pdMS_TO_TICKS(50))) {
+    return;  /* LVGL busy; retry on next tick */
+  }
+  s_vol_dirty = false;
+
+  if (s_state != CHAT_LISTENING) {
+    lvgl_port_unlock();
+    return;
+  }
 
   /* shape: small/medium/large/medium/small to mimic bar envelope */
   static const int factor[5] = { 30, 70, 100, 80, 40 };
-  int base = 4 + (level * 22 / 100);  /* 4..26 */
+  int base = 4 + (s_volume * 22 / 100);  /* 4..26 */
   if (base > 26) base = 26;
 
   for (int i = 0; i < 5; i++) {
@@ -942,6 +1009,7 @@ void ai_chat_ui_update_volume(uint8_t level) {
     lv_anim_set_values(&ui.listening.anims_l[i], 4, h);
     lv_anim_set_values(&ui.listening.anims_r[i], 4, h);
   }
+  lvgl_port_unlock();
 }
 
 void ai_chat_ui_add_message(const char *text, bool is_user) {
@@ -950,6 +1018,10 @@ void ai_chat_ui_add_message(const char *text, bool is_user) {
 }
 
 void ai_chat_ui_show_voice_selector(bool show) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+    ESP_LOGE(TAG, "show_voice_selector: failed to acquire LVGL lock");
+    return;
+  }
   voice_select_viz_t *vs = &ui.voice_sel;
 
   if (show) {
@@ -992,18 +1064,56 @@ void ai_chat_ui_show_voice_selector(bool show) {
       hide_obj(vs->timbre_labels[i]);
     }
   }
+  lvgl_port_unlock();
 }
 
 void ai_chat_ui_voice_select_next(void) {
+  if (!lvgl_port_lock(pdMS_TO_TICKS(100))) {
+    ESP_LOGE(TAG, "voice_select_next: failed to acquire LVGL lock");
+    return;
+  }
   voice_select_viz_t *vs = &ui.voice_sel;
 
   /* cycle timbre within current gender */
   vs->timbre_idx = (vs->timbre_idx + 1) % vs->timbre_count;
   voice_sel_refresh_timbres();
+  lvgl_port_unlock();
 }
 
 int ai_chat_ui_voice_select_get(void) {
   voice_select_viz_t *vs = &ui.voice_sel;
   voice_gender_t g = (voice_gender_t)vs->gender_idx;
   return voice_config_get_gender_voice_id(g, vs->timbre_idx);
+}
+
+/* ===================================================================
+ *  Touch indicator — a small red dot at the last touch point.
+ *  (Coordinate text debug was removed on user request.)
+ *
+ *  Called from lvgl_port touch_read_cb, which runs inside
+ *  lvgl_task's LVGL lock; no extra lock needed here.
+ * =================================================================== */
+void ai_chat_ui_touch_indicator(int x, int y)
+{
+  if (!ui.touch_dot) {
+    ui.touch_dot = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(ui.touch_dot, 16, 16);
+    lv_obj_set_style_bg_color(ui.touch_dot, lv_color_hex(0xFF3030), 0);
+    lv_obj_set_style_bg_opa(ui.touch_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ui.touch_dot, 8, 0);
+    lv_obj_set_style_border_width(ui.touch_dot, 0, 0);
+    lv_obj_set_style_pad_all(ui.touch_dot, 0, 0);
+    lv_obj_clear_flag(ui.touch_dot,
+                      LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_move_foreground(ui.touch_dot);
+  }
+  lv_obj_set_pos(ui.touch_dot, x - 8, y - 8);
+  lv_obj_set_style_opa(ui.touch_dot, LV_OPA_COVER, 0);
+}
+
+void ai_chat_ui_touch_indicator_hide(void)
+{
+  if (ui.touch_dot) {
+    lv_obj_set_style_opa(ui.touch_dot, LV_OPA_TRANSP, 0);
+  }
 }

@@ -12,6 +12,8 @@ idf_component_register(
         "wifi_prov_ui.c"
         "ai_chat_ui.c"
         "lvgl_port.c"
+        "lv_font_custom_cjk_14.c"
+        "lv_font_custom_cjk_16.c"
         "voice_config.c"
     INCLUDE_DIRS
         "."
