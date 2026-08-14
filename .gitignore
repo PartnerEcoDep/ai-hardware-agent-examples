@@ -2,6 +2,7 @@
 .claude
 build*/
 .history
+.workbuddy/
 
 # BurnTool 运行日志（每次烧录自动生成/改写，不纳入版本控制）
 examples/goldieos/tools/burn/**/BurnTool/log.txt
