@@ -1,12 +1,22 @@
+# ESP32-S3 AI Hardware Agent — 项目 CMakeLists.txt
+#
+# 构建方法 (需要安装 ESP-IDF):
+#   cd examples/szpi-esp32s3
+#   idf.py set-target esp32s3
+#   idf.py build
+#   idf.py -p COMx flash monitor
+#
+# 注意:
+#   - 需要先把 libconvai_sdk.a 放到 ../../libs/esp32-s3/
+#   - sdkconfig.defaults 已预设 ESP32-S3 最优配置
+
 cmake_minimum_required(VERSION 3.16)
 
-# This example intentionally uses its own ESP-IDF project instead of the
-# repository's top-level CMake build, which is for GoldieOS targets.
-include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/ConvaiVersion.cmake")
-
-set(IDF_TARGET "esp32s3")
-set(PROJECT_VER "${CONVAI_PROJECT_VERSION}")
-set(EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/components")
-
+# ESP-IDF 项目入口宏 (必须在 project() 之前)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(convai_esp32s3_example VERSION "${CONVAI_PROJECT_VERSION_BASE}")
+
+set(PROJECT_VER "1.0.0")
+project(ai_hardware_agent_esp32)
+
+# 启用组件管理器 (如需额外组件)
+# list(APPEND EXTRA_COMPONENT_DIRS components)

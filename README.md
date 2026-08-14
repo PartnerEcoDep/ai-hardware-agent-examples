@@ -425,7 +425,7 @@ build_win/examples/goldieos/
 | 文档 | 说明 |
 |------|------|
 | [Function Call 开发最佳实践](examples/goldieos/docs/function_call.md) | 如何新增 function call handler、参数解析规范、JSON 协议 |
-| [ESP32-S3 开发最佳实践](examples/esp32/docs/esp32s3_开发最佳实践.md) | ESP32-S3 示例工程从 0 到 1 的部署与运行指南 |
+| [ESP32-S3 开发最佳实践](examples/szpi-esp32s3/docs/esp32s3_开发最佳实践.md) | ESP32-S3 示例工程从 0 到 1 的部署与运行指南 |
 
 ---
 
