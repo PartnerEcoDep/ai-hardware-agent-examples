@@ -48,6 +48,13 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
     )
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        # 安全加固（仅作用于 SDK 库本身，不污染 examples 应用）：
+        # -fstack-protector-strong -D_FORTIFY_SOURCE=2 始终开启；-ftrapv 仅 Debug
+        target_compile_options(convai_sdk PRIVATE
+            -fstack-protector-strong
+            -D_FORTIFY_SOURCE=2
+            $<$<CONFIG:Debug>:-ftrapv>
+        )
         target_compile_definitions(convai_sdk PRIVATE
             CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
         )
@@ -63,11 +70,34 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     message(STATUS "CONVAI_PLATFORM=goldieos: building Windows simulator (goldieos.exe)")
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        # 安全加固（仅作用于 SDK 库本身，不污染 examples 应用）：
+        # -fstack-protector-strong -D_FORTIFY_SOURCE=2 始终开启；-ftrapv 仅 Debug
+        target_compile_options(convai_sdk PRIVATE
+            -fstack-protector-strong
+            -D_FORTIFY_SOURCE=2
+            $<$<CONFIG:Debug>:-ftrapv>
+        )
         target_compile_definitions(convai_sdk PRIVATE
             CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
         )
     endif()
     add_subdirectory(examples/goldieos)
+elseif(CONVAI_PLATFORM STREQUAL "esp32")
+    # ---- ESP32-S3 firmware (ESP-IDF, Xtensa LX7) ----
+    # 使用 ESP-IDF 的 idf.py 构建, 不通过顶层 CMake。
+    # 构建入口: examples/esp32/CMakeLists.txt
+    #
+    #   cd examples/esp32
+    #   idf.py set-target esp32s3
+    #   idf.py build
+    #   idf.py -p COMx flash monitor
+    #
+    # 前置条件:
+    #   1. 安装 ESP-IDF (v5.4+)
+    #   2. 将编译好的 libconvai_sdk.a 放入 libs/esp32s3/
+    #      (参考 docs/esp32_sdk_build_guide.md)
+    message(STATUS "CONVAI_PLATFORM=esp32: 使用 ESP-IDF 构建 ESP32-S3 固件")
+    message(STATUS "  构建入口: cd examples/esp32 && idf.py set-target esp32s3 && idf.py build")
 else()
-    message(STATUS "CONVAI_PLATFORM not set or unsupported: '${CONVAI_PLATFORM}'. Supported platforms: ws63, win")
+    message(STATUS "CONVAI_PLATFORM not set or unsupported: '${CONVAI_PLATFORM}'. Supported platforms: ws63, goldieos, esp32")
 endif()
