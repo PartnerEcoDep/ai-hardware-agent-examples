@@ -99,6 +99,12 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 工程所需第三方组件（LVGL、触摸驱动、JSON 等）已声明在 `main/idf_component.yml`，首次构建时由 ESP-IDF 组件管理器自动下载，无需手动安装。
 
+### 2.5 配置设备凭证
+
+编译前，需要将设备的五元组信息配置到 `examples/szpi-esp32s3/main/sdk/convai_bridge_defaults.c`（该文件与 GoldieOS 的 `convai_bridge_defaults.c` 逐字节对齐，修改方式一致）。
+
+详细说明（凭证获取、参数含义、宏修改示例）见仓库根目录 README 的 [设备凭证配置](../../../README.md#设备凭证配置) 公共章节。
+
 ---
 
 ## 3. 构建
