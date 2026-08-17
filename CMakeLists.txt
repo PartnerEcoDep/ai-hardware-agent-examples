@@ -48,6 +48,13 @@ if(CONVAI_PLATFORM STREQUAL "ws63")
     )
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        # 安全加固（仅作用于 SDK 库本身，不污染 examples 应用）：
+        # -fstack-protector-strong -D_FORTIFY_SOURCE=2 始终开启；-ftrapv 仅 Debug
+        target_compile_options(convai_sdk PRIVATE
+            -fstack-protector-strong
+            -D_FORTIFY_SOURCE=2
+            $<$<CONFIG:Debug>:-ftrapv>
+        )
         target_compile_definitions(convai_sdk PRIVATE
             CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
         )
@@ -63,6 +70,13 @@ elseif(CONVAI_PLATFORM STREQUAL "goldieos")
     message(STATUS "CONVAI_PLATFORM=goldieos: building Windows simulator (goldieos.exe)")
     if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
         add_subdirectory(src)
+        # 安全加固（仅作用于 SDK 库本身，不污染 examples 应用）：
+        # -fstack-protector-strong -D_FORTIFY_SOURCE=2 始终开启；-ftrapv 仅 Debug
+        target_compile_options(convai_sdk PRIVATE
+            -fstack-protector-strong
+            -D_FORTIFY_SOURCE=2
+            $<$<CONFIG:Debug>:-ftrapv>
+        )
         target_compile_definitions(convai_sdk PRIVATE
             CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
         )
