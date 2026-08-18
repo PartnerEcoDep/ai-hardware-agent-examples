@@ -16,15 +16,7 @@
 
 #if LV_FONT_CUSTOM_CJK_16
 
-/*-----------------
- *    BITMAPS
- *----------------*/
-
-/*Store the image of the glyphs*/
 static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
-    /* U+0020 " " */
-
-    /* U+0021 "!" */
     0xfb, 0xea, 0xea, 0xd9, 0xc8, 0xb7, 0xa6, 0xa6,
     0x85, 0x0, 0xfb, 0xfc,
 
@@ -3529,15 +3521,15 @@ static const lv_font_fmt_txt_dsc_t font_dsc = {
 #else
 static lv_font_fmt_txt_dsc_t font_dsc = {
 #endif
-    .glyph_bitmap = glyph_bitmap,
-    .glyph_dsc = glyph_dsc,
-    .cmaps = cmaps,
-    .kern_dsc = NULL,
-    .kern_scale = 0,
-    .cmap_num = 2,
     .bpp = 4,
-    .kern_classes = 0,
+    .cmap_num = 2,
     .bitmap_format = 0,
+    .kern_classes = 0,
+    .kern_scale = 0,
+    .kern_dsc = NULL,
+    .cmaps = cmaps,
+    .glyph_dsc = glyph_dsc,
+    .glyph_bitmap = glyph_bitmap,
 #if LVGL_VERSION_MAJOR == 8
     .cache = &cache
 #endif

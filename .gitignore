@@ -9,5 +9,7 @@ examples/goldieos/tools/burn/**/BurnTool/log.txt
 examples/goldieos/tools/burn/**/BurnTool/optLog/
 
 # ESP-IDF 包管理器自动下载的依赖
-managed_components/
-examples/esp32/tools/node_modules/
+examples/szpi-esp32s3/managed_components
+examples/szpi-esp32s3/sdkconfig
+examples/szpi-esp32s3/sdkconfig.old
+examples/szpi-esp32s3/tools/node_modules
