@@ -131,7 +131,7 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
-构建成功后生成固件，即可烧录。
+> **编译成功判定标准：** 看到 `Project build complete.` 即认为编译成功，可进行烧录。否则说明构建出错，请查看上方报错信息。
 
 ---
 
