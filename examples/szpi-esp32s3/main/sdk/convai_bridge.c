@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file convai_bridge.c
  * @brief ESP32 implementation of the convai_bridge API.
  *
@@ -26,9 +26,11 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
+#include "freertos/idf_additions.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -360,13 +362,13 @@ static void audio_capture_task(void *arg) {
   if (codec == NULL) {
     ESP_LOGE(TAG, "capture task: no active codec");
     s_capture_running = 0;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
     return;
   }
   uint8_t *buf = (uint8_t *)malloc(CAPTURE_BUF_SIZE);   /* TDM 4 时隙原始数据 */
   if (buf == NULL) {
     s_capture_running = 0;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
     return;
   }
   /* planar PCM 缓冲 (L 前 R 后): 只保留 slot0(MIC1)+slot1(MIC3) 两路,
@@ -376,7 +378,7 @@ static void audio_capture_task(void *arg) {
   if (planar_buf == NULL) {
     free(buf);
     s_capture_running = 0;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
     return;
   }
   /* 降采样到 8k 后的双声道 planar 缓冲: 24k 帧数 / 3, 大小 ≈ planar_cap/3。 */
@@ -386,7 +388,7 @@ static void audio_capture_task(void *arg) {
     free(planar_buf);
     free(buf);
     s_capture_running = 0;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
     return;
   }
   /* G.711A 编码输出缓冲: 2 通道 8k 压缩后, planar8_cap 足够。 */
@@ -396,7 +398,7 @@ static void audio_capture_task(void *arg) {
     free(planar_buf);
     free(buf);
     s_capture_running = 0;
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
     return;
   }
 
@@ -490,7 +492,7 @@ static void audio_capture_task(void *arg) {
   s_capture_running = 0;
   ESP_LOGI(TAG, "capture task exited (sent=%u dropped=%u)",
            (unsigned)s_frames_sent, (unsigned)s_frames_dropped);
-  vTaskDelete(NULL);
+  vTaskDeleteWithCaps(NULL);
 }
 
 /* ===================================================================
@@ -499,12 +501,24 @@ static void audio_capture_task(void *arg) {
 static void bridge_start_capture(void) {
   if (s_capture_running) return;
   s_capture_running = 1;
-  BaseType_t ok = xTaskCreate(audio_capture_task, "audio_cap",
-                              8192, NULL, 5, NULL);
+  /* 任务栈分配到 8MB PSRAM，缓解内部 RAM 不足导致的 xTaskCreate 失败。
+   * 内部 RAM 仅 ~220KB，WiFi+LVGL+audio 占用后难以提供 8KB 连续栈块。 */
+  BaseType_t ok = xTaskCreateWithCaps(
+      audio_capture_task, "audio_cap", 8192, NULL, 5, NULL,
+      MALLOC_CAP_SPIRAM);
   if (ok != pdPASS) {
     s_capture_running = 0;
-    ESP_LOGE(TAG, "xTaskCreate(audio_cap) failed");
+    ESP_LOGE(TAG, "xTaskCreateWithCaps(audio_cap) failed: ret=%d "
+             "free_heap=%u min_free=%u",
+             (int)ok,
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)esp_get_minimum_free_heap_size());
+    return;
   }
+  ESP_LOGI(TAG, "capture: PSRAM-stacked task started "
+           "(free_heap=%u min_free=%u)",
+           (unsigned)esp_get_free_heap_size(),
+           (unsigned)esp_get_minimum_free_heap_size());
 }
 
 /* ===================================================================

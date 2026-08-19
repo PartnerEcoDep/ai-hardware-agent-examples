@@ -52,29 +52,15 @@
 
 ### 2.1 安装 ESP-IDF
 
-本项目基于 **ESP-IDF 6.0**（稳定版）。在 [乐鑫官方文档](https://docs.espressif.com/projects/esp-idf/zh_CN/stable/esp32s3/get-started/index.html) 找到对应的安装方式。
+本项目基于 **ESP-IDF 6.0**（稳定版）。在 [乐鑫官方文档](https://docs.espressif.com/projects/esp-idf/zh_CN/stable/esp32s3/get-started/index.html#get-started-set-up-tools) 找到对应的安装方式。
 
 **Windows 推荐使用官方一键安装器：**
 
-1. 打开 [ESP-IDF 安装器下载页](https://dl.espressif.com/dl/esp-idf/)
-2. 下载 Windows 版离线安装器（Offline Installer）
-3. 运行安装器，选择安装 ESP-IDF 6.0，并按提示完成环境配置
-4. 安装完成后，在开始菜单打开 **ESP-IDF 6.0 PowerShell**（已自动激活环境）
+打开 [ESP-IDF Windows 安装器页](https://docs.espressif.com/projects/esp-idf/zh_CN/stable/esp32s3/get-started/windows-setup.html)，按页面操作下载并安装 **ESP-IDF 6.0**。安装完成后，在开始菜单打开 **ESP-IDF 安装管理器**：
 
-> 若使用命令行方式，先按下面的 PowerShell 命令手动激活环境：
->
-> ```powershell
-> # 若默认 Python 版本低于 3.10（如 Anaconda base 自带的旧版），
-> # 需先把新版本 Python 的目录放到 PATH 最前（用实际路径替换 <...>）
-> $env:Path = "<Python 3.10+ 安装目录>;" + $env:Path
->
-> # 进入 ESP-IDF 目录并激活环境
-> # 注意 `. .\export.ps1` 开头 `.` 与 `.\` 之间有空格，否则环境变量不会保留到当前会话
-> Set-Location <ESP-IDF 安装目录>
-> . .\export.ps1
-> ```
->
-> 激活完成后进入工程目录，按 [第 3 节](#3-构建) 的步骤执行构建。激活时若提示缺少工具链（如 `riscv32-esp-elf-gdb`），按提示在 ESP-IDF 目录下执行 `python idf_tools.py install` 安装即可。
+![打开 ESP-IDF 终端](esp_idf_terminal.png)
+
+> 在 **ESP-IDF 6.0 PowerShell**（已自动激活 ESP-IDF 环境）中直接进入工程目录执行构建/烧录即可，无需手动配置环境变量。构建时若提示缺少工具链（如 `riscv32-esp-elf-gdb`），在 ESP-IDF 目录下执行 `python idf_tools.py install` 安装即可。
 
 ### 2.2 安装串口驱动
 
@@ -105,13 +91,42 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 详细说明（凭证获取、参数含义、宏修改示例）见仓库根目录 README 的 [设备凭证配置](../../../README.md#设备凭证配置) 公共章节。
 
+### 2.6 生成 CJK 字体（可选）
+
+界面内置的 CJK 字体源文件 `main/lv_font_custom_cjk_14.c` / `lv_font_custom_cjk_16.c` 由 `tools/` 下的脚本生成，已随仓库提交，**默认无需重新生成**。
+
+当你需要**修改界面文案的字符集**或**重新生成字体**时：
+
+1. 安装字体转换工具依赖（仓库不提交 `tools/node_modules`，需自行安装）：
+
+   ```powershell
+   cd examples/szpi-esp32s3/tools
+   npm install
+   ```
+2. （可选）重新提取 UI 源码中用到的中文字符集：
+
+   ```powershell
+   python gen_chat_font.py -o chat_font_symbols.txt
+   ```
+3. 重新生成 14px / 16px 两个字体文件到 `main/`：
+
+   ```powershell
+   node gen_font.js
+   ```
+
+> **注意：**
+>
+> - `gen_font.js` 默认读取字体 `C:\Windows\Fonts\simhei.ttf`（黑体），请确认该字体存在。
+> - 生成的 `main/lv_font_custom_cjk_*.c` 会被构建使用；如未改动字符集，直接使用仓库已提交的字体文件即可。
+
 ---
 
 ## 3. 构建
 
-在工程目录 `examples/szpi-esp32s3/` 下执行：
+> **先打开 [ESP-IDF 6.0 PowerShell 终端](#21-安装-esp-idf)（已自动激活环境），再在工程目录 `examples/szpi-esp32s3/` 下执行：**
 
 ```powershell
+cd examples/szpi-esp32s3
 idf.py set-target esp32s3
 idf.py build
 ```

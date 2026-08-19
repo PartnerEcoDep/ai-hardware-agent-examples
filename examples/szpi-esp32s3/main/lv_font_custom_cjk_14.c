@@ -3023,15 +3023,15 @@ static const lv_font_fmt_txt_dsc_t font_dsc = {
 #else
 static lv_font_fmt_txt_dsc_t font_dsc = {
 #endif
-    .glyph_bitmap = glyph_bitmap,
-    .glyph_dsc = glyph_dsc,
-    .cmaps = cmaps,
-    .kern_dsc = NULL,
-    .kern_scale = 0,
-    .cmap_num = 2,
     .bpp = 4,
-    .kern_classes = 0,
+    .cmap_num = 2,
     .bitmap_format = 0,
+    .kern_classes = 0,
+    .kern_scale = 0,
+    .kern_dsc = NULL,
+    .cmaps = cmaps,
+    .glyph_dsc = glyph_dsc,
+    .glyph_bitmap = glyph_bitmap,
 #if LVGL_VERSION_MAJOR == 8
     .cache = &cache
 #endif
@@ -3039,11 +3039,6 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
 
 
 
-/*-----------------
- *  PUBLIC FONT
- *----------------*/
-
-/*Initialize a public general font descriptor*/
 #if LVGL_VERSION_MAJOR >= 8
 const lv_font_t lv_font_custom_cjk_14 = {
 #else
