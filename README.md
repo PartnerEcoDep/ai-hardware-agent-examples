@@ -71,7 +71,7 @@ ai-hardware-agent-examples/
 
 从以下地址下载 AI Hardware Agent SDK 发布包：
 
-> **下载地址：** `https://download.huaweicloud-koophone.com/ai-hardware-agent-sdk/ai-hardware-agent-sdk.26.6.2.tar`
+> **下载地址：** `https://download.huaweicloud-koophone.com/ai-hardware-agent-sdk/ai-hardware-agent-sdk.26.8.0.tar`
 
 ---
 
@@ -142,7 +142,7 @@ Test-Path CMakeLists.txt
 | `product_id`     | 产品 ID            | `"your_product_id"`     |
 | `product_key`    | 产品密钥           | `"your_product_key"`    |
 | `product_secret` | 产品密钥（加密用） | `"your_product_secret"` |
-| `device_name`    | 设备名称           | `"goldieos-ws63"`       |
+| `device_name`    | 设备名称           | `"goldieos-ws63"`（WS63 由 WiFi MAC 生成） |
 
 ### 修改默认配置
 
@@ -158,6 +158,8 @@ Test-Path CMakeLists.txt
 ```
 
 > **注意：** 编译前务必确认凭证已替换为有效值，否则设备将无法连接平台服务。
+>
+> **`device_name` 平台差异：** WS63 平台的实际 device_name 由本机 **WiFi MAC** 自动生成并由 `ws63_device_id()` 写入 bridge，`BRIDGE_DEFAULT_DEVICE_NAME` 仅作为未获取到 MAC 时的兜底；模拟器（WIN）与 ESP32-S3 平台则直接使用这里的硬编码值。
 
 ---
 
@@ -183,4 +185,4 @@ Test-Path CMakeLists.txt
 
 ---
 
-> **版本信息：** 本文档基于 AI Hardware Agent SDK 26.6.2 版本编写。
+> **版本信息：** 本文档基于 AI Hardware Agent SDK 26.8.0 版本编写。

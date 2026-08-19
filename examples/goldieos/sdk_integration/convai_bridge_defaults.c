@@ -16,6 +16,7 @@
 #define BRIDGE_DEFAULT_PRODUCT_KEY    "your_product_key"    // ← 替换为实际的 product_key
 #define BRIDGE_DEFAULT_PRODUCT_SECRET "your_product_secret" // ← 替换为实际的 product_secret
 #define BRIDGE_DEFAULT_DEVICE_NAME    "your_device_name"    // ← 替换为实际的 device_name
+/* WS63: device_name 实际由 WiFi MAC 生成（见 ws63_device_id()），此值仅作兜底 */
 #define BRIDGE_DEFAULT_API_KEY        NULL                  // ← 使用 convai.cfg 中的 api_key
 
 /* ---- Default startup config (AI personality/voice) ---- */
