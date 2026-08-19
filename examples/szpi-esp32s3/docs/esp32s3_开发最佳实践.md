@@ -105,6 +105,35 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 详细说明（凭证获取、参数含义、宏修改示例）见仓库根目录 README 的 [设备凭证配置](../../../README.md#设备凭证配置) 公共章节。
 
+### 2.6 生成 CJK 字体（可选）
+
+界面内置的 CJK 字体源文件 `main/lv_font_custom_cjk_14.c` / `lv_font_custom_cjk_16.c` 由 `tools/` 下的脚本生成，已随仓库提交，**默认无需重新生成**。
+
+当你需要**修改界面文案的字符集**或**重新生成字体**时：
+
+1. 安装字体转换工具依赖（仓库不提交 `tools/node_modules`，需自行安装）：
+
+   ```powershell
+   cd examples/szpi-esp32s3/tools
+   npm install
+   ```
+
+2. （可选）重新提取 UI 源码中用到的中文字符集：
+
+   ```powershell
+   python gen_chat_font.py -o chat_font_symbols.txt
+   ```
+
+3. 重新生成 14px / 16px 两个字体文件到 `main/`：
+
+   ```powershell
+   node gen_font.js
+   ```
+
+> **注意：**
+> - `gen_font.js` 默认读取字体 `C:\Windows\Fonts\simhei.ttf`（黑体），请确认该字体存在。
+> - 生成的 `main/lv_font_custom_cjk_*.c` 会被构建使用；如未改动字符集，直接使用仓库已提交的字体文件即可。
+
 ---
 
 ## 3. 构建
