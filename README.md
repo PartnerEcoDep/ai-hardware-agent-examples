@@ -123,18 +123,35 @@ Test-Path CMakeLists.txt
 
 > **公共前置步骤：** 本小节适用于所有接入华为云后端的示例工程（GoldieOS 的 WS63 / 模拟器平台，以及 ESP32-S3 平台）。
 
-编译前，需要将设备的五元组信息配置到 `convai_bridge_defaults.c` 中。
+编译前，需要在 `convai_bridge_defaults.c`（或 `convai.cfg`）中完成**鉴权配置**。工程支持两种鉴权方式：
 
-各示例工程均内置该文件，且内容逐字节对齐（只有注释差异），修改方式完全一致：
+| 鉴权方式            | 需要配置的字段                                            |
+| ------------------- | --------------------------------------------------------- |
+| **API-Key 鉴权**    | `api_key`（推荐，只需一个字段）                           |
+| **Product-Key 鉴权** | `product_id` + `product_key` + `product_secret` + `device_name`（五元组） |
+
+各示例工程均内置该文件，且内容逐字节对齐（只有注释差异），配置方式完全一致：
 
 | 示例工程                  | 文件位置                                                       |
 | ------------------------- | -------------------------------------------------------------- |
 | GoldieOS（WS63 / 模拟器） | `examples/goldieos/sdk_integration/convai_bridge_defaults.c` |
 | ESP32-S3                  | `examples/szpi-esp32s3/main/sdk/convai_bridge_defaults.c`    |
 
-### 准备凭证信息
+### 鉴权方式一：API-Key（推荐）
 
-联系平台获取以下凭证：
+只需一个 `api_key` 即可完成鉴权，按平台不同在对应位置更新：
+
+| 平台                | api_key 配置入口                                        |
+| ------------------- | ------------------------------------------------------- |
+| WS63                | `convai_bridge_defaults.c` 中的 `BRIDGE_DEFAULT_API_KEY` |
+| ESP32-S3            | `convai_bridge_defaults.c` 中的 `BRIDGE_DEFAULT_API_KEY` |
+| 模拟器（WIN）       | 运行时配置文件 `convai.cfg`（与应用同目录）的 `api_key=...` |
+
+配置后 `bridge_build_config_json()` 会生成 `{"info":{"api_key":"..."}}` 连接配置，无需再配置五元组。
+
+### 鉴权方式二：Product-Key（五元组）
+
+需要设备五元组信息，联系平台获取：
 
 | 参数               | 说明               | 示例                      |
 | ------------------ | ------------------ | ------------------------- |
@@ -155,9 +172,10 @@ Test-Path CMakeLists.txt
 #define BRIDGE_DEFAULT_PRODUCT_KEY    "your_product_key"    // ← 替换为实际的 product_key
 #define BRIDGE_DEFAULT_PRODUCT_SECRET "your_product_secret" // ← 替换为实际的 product_secret
 #define BRIDGE_DEFAULT_DEVICE_NAME    "your_device_name"    // ← 替换为实际的 device_name
+#define BRIDGE_DEFAULT_API_KEY        NULL                  // ← API-Key 鉴权：WS63/ESP32 填这里（NULL 走五元组）
 ```
 
-> **注意：** 编译前务必确认凭证已替换为有效值，否则设备将无法连接平台服务。
+> **鉴权优先级：** 若配置了 `api_key`（WS63/ESP32 在 `BRIDGE_DEFAULT_API_KEY`，模拟器在 `convai.cfg` 的 `api_key`），则以 **API-Key** 方式鉴权（见[鉴权方式一](#鉴权方式一apikey推荐)）；否则回退到 **Product-Key**（五元组）方式，使用上面这些宏或 `convai.cfg` 中的对应字段。
 >
 > **`device_name` 平台差异：** WS63 平台的实际 device_name 由本机 **WiFi MAC** 自动生成并由 `ws63_device_id()` 写入 bridge，`BRIDGE_DEFAULT_DEVICE_NAME` 仅作为未获取到 MAC 时的兜底；模拟器（WIN）与 ESP32-S3 平台则直接使用这里的硬编码值。
 
