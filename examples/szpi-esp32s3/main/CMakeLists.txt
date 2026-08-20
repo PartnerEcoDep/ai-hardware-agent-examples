@@ -11,6 +11,24 @@
 #   ui/widgets/ 聊天 UI 的 LVGL 控件 (状态可视化 / 顶栏 / 浮球)
 #   voice/   音色描述 (配置 + 工厂接口)
 
+# ====================================================================
+#  构建时生成 CJK 字体 (LVGL)
+#  字体由 tools/gen_font.js 调用 lv_font_conv 生成，不入库存档（见
+#  .gitignore）。每次配置时(重新)生成，保证 lv_font_custom_cjk_*.c
+#  始终存在且与符号表一致。首次会自动 `npm install` 安装 lv_font_conv。
+# ====================================================================
+execute_process(
+  COMMAND node ${CMAKE_CURRENT_LIST_DIR}/../tools/gen_font.js
+  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/../tools
+  RESULT_VARIABLE _cjk_font_gen_res
+  OUTPUT_VARIABLE _cjk_font_gen_out
+)
+if(NOT _cjk_font_gen_res EQUAL 0)
+  message(FATAL_ERROR "Failed to generate CJK fonts (tools/gen_font.js). "
+                      "Ensure Node.js and C:/Windows/Fonts/simhei.ttf exist.\n"
+                      "${_cjk_font_gen_out}")
+endif()
+
 idf_component_register(
     SRCS
         # ---- 应用入口与启动流程 ----

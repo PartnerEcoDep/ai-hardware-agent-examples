@@ -125,10 +125,10 @@ Test-Path CMakeLists.txt
 
 编译前，需要在 `convai_bridge_defaults.c`（或 `convai.cfg`）中完成**鉴权配置**。工程支持两种鉴权方式：
 
-| 鉴权方式            | 需要配置的字段                                            |
-| ------------------- | --------------------------------------------------------- |
-| **API-Key 鉴权**    | `api_key`（推荐，只需一个字段）                           |
-| **Product-Key 鉴权** | `product_id` + `product_key` + `product_secret` + `device_name`（五元组） |
+| 鉴权方式                   | 需要配置的字段                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| **API-Key 鉴权**     | `agent_id` + `api_key`                                                                       |
+| **Product-Key 鉴权** | `agent_id` + `product_id` + `product_key` + `product_secret` + `device_name`（五元组） |
 
 各示例工程均内置该文件，且内容逐字节对齐（只有注释差异），配置方式完全一致：
 
@@ -139,26 +139,26 @@ Test-Path CMakeLists.txt
 
 ### 鉴权方式一：API-Key（推荐）
 
-只需一个 `api_key` 即可完成鉴权，按平台不同在对应位置更新：
+需要**公共字段 `agent_id`**（智能体 ID，所有鉴权方式均需配置）加上 `api_key`。其中 `agent_id` 通过 `BRIDGE_DEFAULT_BOT_ID` 配置，`api_key` 按平台不同在对应位置更新：
 
-| 平台                | api_key 配置入口                                        |
-| ------------------- | ------------------------------------------------------- |
-| WS63                | `convai_bridge_defaults.c` 中的 `BRIDGE_DEFAULT_API_KEY` |
-| ESP32-S3            | `convai_bridge_defaults.c` 中的 `BRIDGE_DEFAULT_API_KEY` |
-| 模拟器（WIN）       | 运行时配置文件 `convai.cfg`（与应用同目录）的 `api_key=...` |
+| 平台          | `agent_id` 配置入口                                                                           | `api_key` 配置入口                                           |
+| ------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| WS63          | `convai_bridge_defaults.c` 的 `BRIDGE_DEFAULT_BOT_ID`                                       | `convai_bridge_defaults.c` 的 `BRIDGE_DEFAULT_API_KEY`     |
+| ESP32-S3      | `convai_bridge_defaults.c` 的 `BRIDGE_DEFAULT_BOT_ID`                                       | `convai_bridge_defaults.c` 的 `BRIDGE_DEFAULT_API_KEY`     |
+| 模拟器（WIN） | `convai_bridge_defaults.c` 的 `BRIDGE_DEFAULT_BOT_ID` 或 `convai.cfg` 的 `agent_id=...` | 运行时配置文件`convai.cfg`（与应用同目录）的 `api_key=...` |
 
-配置后 `bridge_build_config_json()` 会生成 `{"info":{"api_key":"..."}}` 连接配置，无需再配置五元组。
+配置后 `bridge_build_config_json()` 会生成 `{"info":{"api_key":"..."}}` 连接配置；`agent_id` 作为公共字段用于引擎创建。
 
 ### 鉴权方式二：Product-Key（五元组）
 
 需要设备五元组信息，联系平台获取：
 
-| 参数               | 说明               | 示例                      |
-| ------------------ | ------------------ | ------------------------- |
-| `agent_id`       | 智能体 ID          | `"goldieos-agent"`      |
-| `product_id`     | 产品 ID            | `"your_product_id"`     |
-| `product_key`    | 产品密钥           | `"your_product_key"`    |
-| `product_secret` | 产品密钥（加密用） | `"your_product_secret"` |
+| 参数               | 说明               | 示例                                         |
+| ------------------ | ------------------ | -------------------------------------------- |
+| `agent_id`       | 智能体 ID          | `"goldieos-agent"`                         |
+| `product_id`     | 产品 ID            | `"your_product_id"`                        |
+| `product_key`    | 产品密钥           | `"your_product_key"`                       |
+| `product_secret` | 产品密钥（加密用） | `"your_product_secret"`                    |
 | `device_name`    | 设备名称           | `"goldieos-ws63"`（WS63 由 WiFi MAC 生成） |
 
 ### 修改默认配置

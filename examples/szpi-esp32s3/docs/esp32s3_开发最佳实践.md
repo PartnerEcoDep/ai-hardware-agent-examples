@@ -93,11 +93,11 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 ### 2.6 生成 CJK 字体（可选）
 
-界面内置的 CJK 字体源文件 `main/lv_font_custom_cjk_14.c` / `lv_font_custom_cjk_16.c` 由 `tools/` 下的脚本生成，已随仓库提交，**默认无需重新生成**。
+界面内置的 CJK 字体 `main/lv_font_custom_cjk_14.c` / `lv_font_custom_cjk_16.c` 由 `tools/gen_font.js`（基于 `lv_font_conv`）生成，**构建时自动生成、不入库存档**（见 [3.0 前置](#30-前置安装-nodejs--npm首次必需)）。
 
-当你需要**修改界面文案的字符集**或**重新生成字体**时：
+当你需要**修改界面文案的字符集**、**更换字体源**或**手动重新生成字体**时：
 
-1. 安装字体转换工具依赖（仓库不提交 `tools/node_modules`，需自行安装）：
+1. 安装字体转换工具依赖（`tools/node_modules` 不入库，需先安装）：
 
    ```powershell
    cd examples/szpi-esp32s3/tools
@@ -108,7 +108,7 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
    ```powershell
    python gen_chat_font.py -o chat_font_symbols.txt
    ```
-3. 重新生成 14px / 16px 两个字体文件到 `main/`：
+3. 手动重新生成 14px / 16px 两个字体文件到 `main/`：
 
    ```powershell
    node gen_font.js
@@ -117,7 +117,7 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 > **注意：**
 >
 > - `gen_font.js` 默认读取字体 `C:\Windows\Fonts\simhei.ttf`（黑体），请确认该字体存在。
-> - 生成的 `main/lv_font_custom_cjk_*.c` 会被构建使用；如未改动字符集，直接使用仓库已提交的字体文件即可。
+> - 生成的 `main/lv_font_custom_cjk_*.c` 会被构建使用；`idf.py build` 时会自动重新生成，一般无需手动执行此节。
 
 ---
 
@@ -125,17 +125,55 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 > **先打开 [ESP-IDF 6.0 PowerShell 终端](#21-安装-esp-idf)（已自动激活环境），再在工程目录 `examples/szpi-esp32s3/` 下执行：**
 
+### 3.0 前置：安装 Node.js / npm（首次必需）
+
+CJK 字体由构建时脚本 `tools/gen_font.js` 调用 `lv_font_conv` **自动生成**（字体文件不入库），因此首次构建前需要：
+
+**（1）若系统尚未安装 Node.js / npm：**
+
+1. 打开 [Node.js 官网](https://nodejs.org/) 下载 **LTS 版本**安装包
+2. 一路默认安装（自动带上 npm），安装完成后**重启终端**使 `node` / `npm` 可用
+3. 验证：
+
+   ```powershell
+   node --version
+   npm --version
+   ```
+
+**（2）安装字体转换工具依赖（`lv_font_conv`）：**
+
+```powershell
+cd examples/szpi-esp32s3/tools
+npm install
+```
+
+> `tools/node_modules` 不入库，仅首次（或依赖缺失时）执行一次即可。
+
+### 3.1 构建
+
 ```powershell
 cd examples/szpi-esp32s3
 idf.py set-target esp32s3
 idf.py build
 ```
 
-> **编译成功判定标准：** 看到 `Project build complete.` 即认为编译成功，可进行烧录。否则说明构建出错，请查看上方报错信息。
+> **编译成功判定标准：** 看到 `Project build complete.` 即认为编译成功，可进行烧录。否则说明构建出错，请查看上方报错信息。构建时若提示 `Failed to generate CJK fonts` 或 `npm install failed`，请回到 [3.0 前置](#30-前置安装-nodejs--npm首次必需) 完成 `cd tools && npm install` 后重新构建。
 
 ---
 
 ## 4. 烧录与运行
+
+### 4.1 首次烧录：先擦除 Flash
+
+**第一次烧录**（或更换新板/之前烧过别的固件）时，建议先**擦除整个 Flash**，清除历史分区/NVS 残留，避免旧数据影响首次配网：
+
+```powershell
+idf.py -p <COMx> erase-flash
+```
+
+> `erase-flash` 会清空 Flash 中的全部内容（含已保存的 WiFi 凭证、NVS 等）。**只需首次或出问题时执行**，日常重新烧录无需重复擦除。
+
+### 4.2 烧录并查看日志
 
 将开发板通过 USB 连接到电脑，执行：
 
@@ -149,9 +187,21 @@ idf.py -p <COMx> flash monitor
 
 ## 5. 使用说明
 
-1. **配网**：首次上电进入 WiFi 配网界面，按提示让设备连接网络。
-2. **启动会话**：连接成功后，**按下 BOOT 按键**开始 AI 对话。
-3. **切换音色**：点击或长按浮球进入音色面板，选择后确认即可。
+**首次配网：**
+
+1. **上电进入配网模式**：首次使用（无已保存 WiFi 凭证）时，设备会自动进入 **AP 配网模式**，LCD 上会显示**热点名称**（形如 `XinZhi-XXXX`）和配置地址 `192.168.4.1`。
+2. **连接热点**：用手机/电脑连接该热点（`XinZhi-XXXX`）。
+3. **进入配网页并填写 WiFi**：
+   - 连接热点后**正常情况下会自动弹出配网页**，选择并填写你的路由器 WiFi 账号密码；
+   - 若**没有自动弹出配网页**，则手动打开浏览器，访问屏幕显示的 `192.168.4.1` 进入配网页。
+4. 保存后设备会自动连接路由器 WiFi，进入主界面，可开始 AI 对话。
+
+**日常使用：**
+
+1. **启动会话**：连接成功后，**按下 BOOT 按键**开始 AI 对话。
+2. **切换音色**：点击或长按浮球进入音色面板，选择后确认即可。
+
+> **重新配网**：如需更换 WiFi，可通过 [4.1 首次烧录](#41-首次烧录先擦除-flash) 的 `idf.py erase-flash` 清空后重新配网，或根据固件提供的重新配网入口操作。
 
 ---
 

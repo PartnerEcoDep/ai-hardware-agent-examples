@@ -13,3 +13,7 @@ examples/szpi-esp32s3/managed_components
 examples/szpi-esp32s3/sdkconfig
 examples/szpi-esp32s3/sdkconfig.old
 examples/szpi-esp32s3/tools/node_modules
+
+# CJK 字体为构建时生成产物 (tools/gen_font.js)，不入库存档
+examples/szpi-esp32s3/main/lv_font_custom_cjk_14.c
+examples/szpi-esp32s3/main/lv_font_custom_cjk_16.c
