@@ -2,6 +2,10 @@
 /* Generate custom CJK LVGL fonts for the ESP32 AI chat UI.
  * Reads the symbol set from chat_font_symbols.txt (UTF-8) and invokes
  * lv_font_conv to produce 14px and 16px lvgl .c font files into main/.
+ *
+ * Auto-installs tools/node_modules (via npm install) when lv_font_conv is
+ * missing, so it can be invoked directly from the build (CMake) without a
+ * manual `npm install` step.
  */
 "use strict";
 const fs = require("fs");
@@ -15,6 +19,18 @@ const fontSrc = "C:\\Windows\\Fonts\\simhei.ttf";
 const convJs = path.join(ROOT, "node_modules", "lv_font_conv",
                          "lv_font_conv.js");
 const outDir = path.join(ROOT, "..", "main");
+
+/* Auto-install lv_font_conv if node_modules is missing/outdated. */
+if (!fs.existsSync(convJs)) {
+  console.log("lv_font_conv not found, running `npm install` in tools/ ...");
+  const npm = spawnSync(
+    process.platform === "win32" ? "npm.cmd" : "npm", ["install"],
+    { cwd: ROOT, encoding: "utf8", stdio: "inherit" });
+  if (npm.status !== 0) {
+    console.error("npm install failed. Please run `cd tools && npm install` manually.");
+    process.exit(npm.status || 1);
+  }
+}
 
 function gen(size, varName, outName) {
   const out = path.join(outDir, outName);
