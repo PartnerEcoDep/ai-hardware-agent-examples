@@ -46,6 +46,7 @@ static uint16_t* avatar_pic_list[] = {
 #if defined(CONVAI_USE_MINIMAX_VOICE)
 /* MiniMax voices */
 static const char* voice_list_female[] = {
+    "    null",
     "    温柔少女",
     "    害羞女孩",
     "    热心女孩",
@@ -53,6 +54,7 @@ static const char* voice_list_female[] = {
 };
 
 static const char* voice_list_male[] = {
+    "    null",
     "    温润男声",
     "    搞笑大爷",
     "    嘴硬竹马",
@@ -113,6 +115,7 @@ static const char* relationship_list_male[] = {
 #if defined(CONVAI_USE_MINIMAX_VOICE)
 /* MiniMax voices */
 static const char* voice_type_female[] = {
+    "",
     "Chinese (Mandarin)_Warm_Girl",
     "Chinese (Mandarin)_BashfulGirl",
     "Chinese (Mandarin)_Warm_HeartedGirl",
@@ -120,6 +123,7 @@ static const char* voice_type_female[] = {
 };
 
 static const char* voice_type_male[] = {
+    "",
     "Chinese (Mandarin)_Gentleman",
     "Chinese (Mandarin)_Humorous_Elder",
     "Chinese (Mandarin)_Stubborn_Friend",
@@ -1213,29 +1217,51 @@ static int generate_convai_config_json(char *buf, size_t buf_size)
     /* Escape double-quotes in prompt strings for JSON (just in case) */
     /* All current prompts use Chinese quotes (「」\" etc), no raw " chars,
      * but we do a safe pass anyway: double any \ or " found. */
-    int n = snprintf(buf, buf_size,
-        "{"
-        "\"config\":{"
-        "\"llm_config\":{"
-        "\"system_messages\":["
-        "\"%s\","
-        "\"%s\","
-        "\"%s\""
-        "]"
-        "},"
-        "\"tts_config\":{"
-        "\"provider_params\":{"
-        "\"audio\":{"
-        "\"voice_type\":\"%s\""
-        "}"
-        "}"
-        "}"
-        "}"
-        "}",
-        base_prompt,
-        personality_str,
-        relationship_str,
-        voice_str);
+    int n;
+    if (voice_str != NULL && voice_str[0] != '\0') {
+        // voice_str is specified, include tts_config
+        n = snprintf(buf, buf_size,
+            "{"
+            "\"config\":{"
+            "\"llm_config\":{"
+            "\"system_messages\":["
+            "\"%s\","
+            "\"%s\","
+            "\"%s\""
+            "]"
+            "},"
+            "\"tts_config\":{"
+            "\"provider_params\":{"
+            "\"audio\":{"
+            "\"voice_type\":\"%s\""
+            "}"
+            "}"
+            "}"
+            "}"
+            "}",
+            base_prompt,
+            personality_str,
+            relationship_str,
+            voice_str);
+    } else {
+        // voice_str is null, do not include tts_config
+        n = snprintf(buf, buf_size,
+            "{"
+            "\"config\":{"
+            "\"llm_config\":{"
+            "\"system_messages\":["
+            "\"%s\","
+            "\"%s\","
+            "\"%s\""
+            "]"
+            "}"
+            "}"
+            "}",
+            base_prompt,
+            personality_str,
+            relationship_str);
+    }
+
 
     if (n < 0 || (size_t)n >= buf_size) {
         printf("[AI Settings] ERROR: config JSON truncated (need %d, have %zu)\n", n, buf_size);
