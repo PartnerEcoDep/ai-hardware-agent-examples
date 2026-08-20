@@ -93,11 +93,11 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 ### 2.6 生成 CJK 字体（可选）
 
-界面内置的 CJK 字体源文件 `main/lv_font_custom_cjk_14.c` / `lv_font_custom_cjk_16.c` 由 `tools/` 下的脚本生成，已随仓库提交，**默认无需重新生成**。
+界面内置的 CJK 字体 `main/lv_font_custom_cjk_14.c` / `lv_font_custom_cjk_16.c` 由 `tools/gen_font.js`（基于 `lv_font_conv`）生成，**构建时自动生成、不入库存档**（见 [3.0 前置](#30-前置安装-nodejs--npm首次必需)）。
 
-当你需要**修改界面文案的字符集**或**重新生成字体**时：
+当你需要**修改界面文案的字符集**、**更换字体源**或**手动重新生成字体**时：
 
-1. 安装字体转换工具依赖（仓库不提交 `tools/node_modules`，需自行安装）：
+1. 安装字体转换工具依赖（`tools/node_modules` 不入库，需先安装）：
 
    ```powershell
    cd examples/szpi-esp32s3/tools
@@ -108,7 +108,7 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
    ```powershell
    python gen_chat_font.py -o chat_font_symbols.txt
    ```
-3. 重新生成 14px / 16px 两个字体文件到 `main/`：
+3. 手动重新生成 14px / 16px 两个字体文件到 `main/`：
 
    ```powershell
    node gen_font.js
@@ -117,7 +117,7 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 > **注意：**
 >
 > - `gen_font.js` 默认读取字体 `C:\Windows\Fonts\simhei.ttf`（黑体），请确认该字体存在。
-> - 生成的 `main/lv_font_custom_cjk_*.c` 会被构建使用；如未改动字符集，直接使用仓库已提交的字体文件即可。
+> - 生成的 `main/lv_font_custom_cjk_*.c` 会被构建使用；`idf.py build` 时会自动重新生成，一般无需手动执行此节。
 
 ---
 
@@ -125,13 +125,39 @@ AI Hardware Agent SDK 由提供方**单独发放**（`ai-hardware-agent-sdk-<ver
 
 > **先打开 [ESP-IDF 6.0 PowerShell 终端](#21-安装-esp-idf)（已自动激活环境），再在工程目录 `examples/szpi-esp32s3/` 下执行：**
 
+### 3.0 前置：安装 Node.js / npm（首次必需）
+
+CJK 字体由构建时脚本 `tools/gen_font.js` 调用 `lv_font_conv` **自动生成**（字体文件不入库），因此首次构建前需要：
+
+**（1）若系统尚未安装 Node.js / npm：**
+
+1. 打开 [Node.js 官网](https://nodejs.org/) 下载 **LTS 版本**安装包
+2. 一路默认安装（自动带上 npm），安装完成后**重启终端**使 `node` / `npm` 可用
+3. 验证：
+
+   ```powershell
+   node --version
+   npm --version
+   ```
+
+**（2）安装字体转换工具依赖（`lv_font_conv`）：**
+
+```powershell
+cd examples/szpi-esp32s3/tools
+npm install
+```
+
+> `tools/node_modules` 不入库，仅首次（或依赖缺失时）执行一次即可。
+
+### 3.1 构建
+
 ```powershell
 cd examples/szpi-esp32s3
 idf.py set-target esp32s3
 idf.py build
 ```
 
-> **编译成功判定标准：** 看到 `Project build complete.` 即认为编译成功，可进行烧录。否则说明构建出错，请查看上方报错信息。
+> **编译成功判定标准：** 看到 `Project build complete.` 即认为编译成功，可进行烧录。否则说明构建出错，请查看上方报错信息。构建时若提示 `Failed to generate CJK fonts` 或 `npm install failed`，请回到 [3.0 前置](#30-前置安装-nodejs--npm首次必需) 完成 `cd tools && npm install` 后重新构建。
 
 ---
 
