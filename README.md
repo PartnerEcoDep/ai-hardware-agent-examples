@@ -36,12 +36,27 @@ SDK 的 `include/` 和 `libs/` 放在工程根目录，供各平台共用。
 ```
 ai-hardware-agent-examples/
 ├── CMakeLists.txt             # 顶层构建入口（ws63 / goldieos 模拟器）
-├── cmake/                     # CMake 辅助配置
+├── CMakePresets.json          # 两个平台的对称构建预设
+├── CMakeUserPresets.json      # 可选的本机覆盖配置（不提交）
+├── cmake/
+│   ├── convai-version.cmake   # 版本信息
+│   ├── convai-sdk.cmake       # SDK 源码 / 预编译库解析
+│   ├── convai-build-options.cmake  # 公共编译策略
+│   ├── convai-artifacts.cmake      # 版本化产物规则
+│   └── toolchains/
+│       ├── ws63-riscv-gcc.cmake
+│       └── goldieos-mingw-gcc.cmake
 ├── include/convai/            # SDK 公共头文件（convai_api/event/platform/types.h）
 ├── libs/                      # SDK 预编译库（ws63 / win / esp32-s3）
 └── examples/
     ├── goldieos/              # GoldieOS demo（WS63 + 模拟器两种平台）
     │   ├── CMakeLists.txt
+    │   ├── cmake/
+    │   │   ├── goldieos-common.cmake
+    │   │   ├── goldieos-ws63.cmake
+    │   │   ├── goldieos-win.cmake
+    │   │   ├── ws63-mbedtls.cmake
+    │   │   └── ws63-firmware.cmake
     │   ├── sdk_integration/   #   SDK 集成桥接层
     │   ├── apps/ services/ drivers/   #   应用层 / 系统服务 / 硬件驱动
     │   ├── platform/{win,ws63} + HAL 实现
@@ -87,7 +102,7 @@ cd ai-hardware-agent-examples
 tar -xvf /path/to/ai-hardware-agent-examples.tar
 ```
 
-解压后得到 `CMakeLists.txt`、`examples/`。
+解压后得到 `CMakeLists.txt`、`CMakePresets.json`、`cmake/` 和 `examples/`。
 
 ### 步骤 2：将 SDK 包解压到工程根目录
 
@@ -113,6 +128,9 @@ Test-Path examples/goldieos/sdk_integration/convai_codec_g711a.c
 
 # 确认顶层构建脚本
 Test-Path CMakeLists.txt
+Test-Path CMakePresets.json
+Test-Path cmake/toolchains/ws63-riscv-gcc.cmake
+Test-Path cmake/toolchains/goldieos-mingw-gcc.cmake
 ```
 
 > **说明：** 各平台的工具链准备、编译、烧录 / 运行等详细步骤都属于对应示例工程，请直接查阅 [平台编译指南](#平台编译指南) 与 [开发文档](#开发文档)。
@@ -184,6 +202,10 @@ Test-Path CMakeLists.txt
 ## 平台编译指南
 
 各平台的编译、烧录 / 运行指南已按示例工程拆分到对应目录下：
+
+GoldieOS 的 WS63 和 Windows 模拟器构建统一使用 CMake Presets，需要
+CMake 3.21 或更高版本。两端均提供 `Release`、`Debug` 和
+`RelWithDebInfo` 配置；运行 `cmake --list-presets` 可查看全部名称。
 
 | 平台          | 所属示例                               | 指南                                                                         |
 | ------------- | -------------------------------------- | ---------------------------------------------------------------------------- |
