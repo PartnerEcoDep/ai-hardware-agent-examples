@@ -78,7 +78,7 @@ ai-hardware-agent-examples/
 
 从以下地址下载示例代码包：
 
-> **下载地址：** `https://github.com/uoongx/ai-hardware-agent-examples.git`
+> **下载地址：** `https://github.com/PartnerEcoDep/ai-hardware-agent-examples.git`
 
 可以通过 `git clone` 获取，也可以下载仓库的 `.tar.gz` 发布包后解压。
 
