@@ -1,0 +1,111 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "common-base",
+      "hidden": true,
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "ws63-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/ws63-riscv-gcc.cmake",
+      "cacheVariables": {
+        "CONVAI_PLATFORM": "ws63"
+      }
+    },
+    {
+      "name": "ws63-release",
+      "displayName": "WS63 Release",
+      "inherits": "ws63-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "ws63-debug",
+      "displayName": "WS63 Debug",
+      "inherits": "ws63-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ws63-relwithdebinfo",
+      "displayName": "WS63 RelWithDebInfo",
+      "inherits": "ws63-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "goldieos-win-base",
+      "hidden": true,
+      "inherits": "common-base",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/goldieos-mingw-gcc.cmake",
+      "cacheVariables": {
+        "CONVAI_PLATFORM": "goldieos"
+      }
+    },
+    {
+      "name": "goldieos-win-release",
+      "displayName": "GoldieOS Windows Release",
+      "inherits": "goldieos-win-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "goldieos-win-debug",
+      "displayName": "GoldieOS Windows Debug",
+      "inherits": "goldieos-win-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "goldieos-win-relwithdebinfo",
+      "displayName": "GoldieOS Windows RelWithDebInfo",
+      "inherits": "goldieos-win-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ws63-release",
+      "configurePreset": "ws63-release"
+    },
+    {
+      "name": "ws63-debug",
+      "configurePreset": "ws63-debug"
+    },
+    {
+      "name": "ws63-relwithdebinfo",
+      "configurePreset": "ws63-relwithdebinfo"
+    },
+    {
+      "name": "goldieos-win-release",
+      "configurePreset": "goldieos-win-release"
+    },
+    {
+      "name": "goldieos-win-debug",
+      "configurePreset": "goldieos-win-debug"
+    },
+    {
+      "name": "goldieos-win-relwithdebinfo",
+      "configurePreset": "goldieos-win-relwithdebinfo"
+    }
+  ]
+}

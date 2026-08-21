@@ -1,103 +1,65 @@
-cmake_minimum_required(VERSION 3.10)
-include("${CMAKE_CURRENT_LIST_DIR}/cmake/ConvaiVersion.cmake")
+cmake_minimum_required(VERSION 3.21)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/convai-version.cmake")
+
 project(ai_hardware_agent_examples
     VERSION "${CONVAI_PROJECT_VERSION_BASE}"
-    LANGUAGES C CXX)
-
-# ====================================================================
-#  Global settings
-# ====================================================================
+    LANGUAGES C CXX
+)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-# Enable compile warnings
-if(MSVC)
-    add_compile_options(/W3)
+set(CONVAI_PLATFORM "" CACHE STRING "Target platform")
+set_property(CACHE CONVAI_PLATFORM PROPERTY STRINGS ws63 goldieos)
+
+if(CONVAI_PLATFORM STREQUAL "esp32")
+    message(FATAL_ERROR
+        "ESP32-S3 uses its ESP-IDF entry point instead of the root CMake project.\n"
+        "Run: cd examples/szpi-esp32s3 && idf.py set-target esp32s3 && idf.py build")
+elseif(NOT CONVAI_PLATFORM MATCHES "^(ws63|goldieos)$")
+    message(FATAL_ERROR
+        "CONVAI_PLATFORM must be 'ws63' or 'goldieos'; got "
+        "'${CONVAI_PLATFORM}'. Use one of the configure presets in "
+        "CMakePresets.json.")
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/convai-build-options.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/convai-sdk.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/convai-artifacts.cmake")
+
+if(CONVAI_PLATFORM STREQUAL "ws63")
+    set(_convai_sdk_archive
+        "${CMAKE_CURRENT_LIST_DIR}/libs/ws63/libconvai_sdk.a")
+    set(_convai_platform_label "WS63 firmware")
 else()
-    add_compile_options(-Wall -Wextra)
+    set(_convai_sdk_archive
+        "${CMAKE_CURRENT_LIST_DIR}/libs/win/libconvai_sdk.a")
+    set(_convai_platform_label "GoldieOS Windows simulator")
+endif()
+
+convai_resolve_sdk_target(
+    TARGET convai_sdk
+    SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/src"
+    SOURCE_BINARY_DIR "${CMAKE_BINARY_DIR}/src"
+    PREBUILT_LIBRARY "${_convai_sdk_archive}"
+    VERSION "${CONVAI_PROJECT_VERSION}"
+    REQUIRED
+    OUT_MODE _convai_sdk_mode
+)
+
+# Source-built SDK targets inherit project policy. Imported archives already
+# contain their own compile settings and therefore only expose usage headers.
+if(_convai_sdk_mode STREQUAL "SOURCE")
+    convai_target_enable_warnings(convai_sdk)
+    if(CONVAI_PLATFORM STREQUAL "ws63")
+        convai_target_enable_ws63_options(convai_sdk)
+    endif()
 endif()
 
 message(STATUS "CONVAI_PROJECT_VERSION = ${CONVAI_PROJECT_VERSION}")
+message(STATUS
+    "Configuring ${_convai_platform_label} (SDK mode: ${_convai_sdk_mode})")
 
-# ====================================================================
-#  Examples  (ws63 firmware / win simulator)
-# ====================================================================
-
-if(CONVAI_PLATFORM STREQUAL "ws63")
-    # ---- C Compile options (RISC-V specific) ----
-    add_compile_options(
-        -w
-        -march=rv32imfc
-        -mabi=ilp32f
-        --short-enums
-        -std=gnu99
-        -fasm
-        -fcommon
-        -Wall -Wextra
-        -Winit-self -Wpointer-arith -Wstrict-prototypes
-        -fno-strict-aliasing
-        -Os
-        -fno-unwind-tables
-        -ffreestanding
-        -fdata-sections -ffunction-sections
-        -nostdlib -pipe
-        -fno-tree-scev-cprop
-        -mpush-pop -msmall-data-limit=0 -fno-ipa-ra
-    )
-    if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
-        add_subdirectory(src)
-        # 安全加固（仅作用于 SDK 库本身，不污染 examples 应用）：
-        # -fstack-protector-strong -D_FORTIFY_SOURCE=2 始终开启；-ftrapv 仅 Debug
-        target_compile_options(convai_sdk PRIVATE
-            -fstack-protector-strong
-            -D_FORTIFY_SOURCE=2
-            $<$<CONFIG:Debug>:-ftrapv>
-        )
-        target_compile_definitions(convai_sdk PRIVATE
-            CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
-        )
-    endif()
-    add_subdirectory(examples/goldieos)
-elseif(CONVAI_PLATFORM STREQUAL "goldieos")
-    # ---- Windows simulator (native MinGW gcc/g++) ----
-    # Configure with:
-    #   cmake -G "MinGW Makefiles" -DCONVAI_PLATFORM=goldieos \
-    #         -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-    #         -DCMAKE_C_COMPILER_WORKS=1 -DCMAKE_CXX_COMPILER_WORKS=1 \
-    #         -DCMAKE_MAKE_PROGRAM=mingw32-make ..
-    message(STATUS "CONVAI_PLATFORM=goldieos: building Windows simulator (goldieos.exe)")
-    if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
-        add_subdirectory(src)
-        # 安全加固（仅作用于 SDK 库本身，不污染 examples 应用）：
-        # -fstack-protector-strong -D_FORTIFY_SOURCE=2 始终开启；-ftrapv 仅 Debug
-        target_compile_options(convai_sdk PRIVATE
-            -fstack-protector-strong
-            -D_FORTIFY_SOURCE=2
-            $<$<CONFIG:Debug>:-ftrapv>
-        )
-        target_compile_definitions(convai_sdk PRIVATE
-            CONVAI_PROJECT_VERSION="${CONVAI_PROJECT_VERSION}"
-        )
-    endif()
-    add_subdirectory(examples/goldieos)
-elseif(CONVAI_PLATFORM STREQUAL "esp32")
-    # ---- ESP32-S3 firmware (ESP-IDF, Xtensa LX7) ----
-    # 使用 ESP-IDF 的 idf.py 构建, 不通过顶层 CMake。
-    # 构建入口: examples/esp32/CMakeLists.txt
-    #
-    #   cd examples/esp32
-    #   idf.py set-target esp32s3
-    #   idf.py build
-    #   idf.py -p COMx flash monitor
-    #
-    # 前置条件:
-    #   1. 安装 ESP-IDF (v5.4+)
-    #   2. 将编译好的 libconvai_sdk.a 放入 libs/esp32s3/
-    #      (参考 docs/esp32_sdk_build_guide.md)
-    message(STATUS "CONVAI_PLATFORM=esp32: 使用 ESP-IDF 构建 ESP32-S3 固件")
-    message(STATUS "  构建入口: cd examples/esp32 && idf.py set-target esp32s3 && idf.py build")
-else()
-    message(STATUS "CONVAI_PLATFORM not set or unsupported: '${CONVAI_PLATFORM}'. Supported platforms: ws63, goldieos, esp32")
-endif()
+add_subdirectory(examples/goldieos)
