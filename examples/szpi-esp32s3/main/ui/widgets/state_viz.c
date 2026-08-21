@@ -14,9 +14,11 @@
 
 #include "ai_chat_ui_internal.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "convai_bridge.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include <stdint.h>
 
 #define CAPSULE_COUNT 4
@@ -391,7 +393,6 @@ static volatile bool s_voice_applying = false;
 
 static void voice_apply_task(void *arg) {
   int voice_id = (int)(intptr_t)arg;
-  ESP_LOGI(TAG, "voice_apply_task: id=%d", voice_id);
   if (voice_factory_select(convai_bridge_get_engine(), voice_id) != 0) {
     ESP_LOGE(TAG, "apply voice failed (id=%d)", voice_id);
   }
@@ -408,13 +409,13 @@ static void on_voice_sel_confirm(lv_event_t *e) {
   const voice_select_viz_t *vs = &ui.voice_sel;
   voice_gender_t gender = (voice_gender_t)vs->gender_idx;
   int voice_id = voice_factory_gender_voice_id(gender, vs->timbre_idx);
-  const char *name = voice_factory_gender_voice_name(gender, vs->timbre_idx);
 
-  ESP_LOGI(TAG, "confirm: id=%d name=%s", voice_id, name);
   s_voice_applying = true;
   voice_sel_close();
-  if (xTaskCreate(voice_apply_task, "voice_apply", 6144,
-                  (void *)(intptr_t)voice_id, 5, NULL) != pdPASS) {
+  /* 栈放 PSRAM: 内部 RAM 紧张时 xTaskCreate 偶发失败 */
+  if (xTaskCreateWithCaps(voice_apply_task, "voice_apply", 6144,
+                          (void *)(intptr_t)voice_id, 5, NULL,
+                          MALLOC_CAP_SPIRAM) != pdPASS) {
     s_voice_applying = false;
     ESP_LOGE(TAG, "voice_apply task create failed (id=%d)", voice_id);
   }
