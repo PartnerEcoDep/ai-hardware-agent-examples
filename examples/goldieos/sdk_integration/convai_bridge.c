@@ -10,11 +10,15 @@
 #include "convai_bridge_defaults.h"
 #include "convai_config_file.h"
 #include "convai_audio_internal.h"
+#include "convai_comfort.h"
+#include "convai_memory_budget.h"
 #include "service_manager.h"
 #include "goldie_osal.h"
+#include "app_codec.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* ---- internal state ---- */
 static convai_engine_t          g_engine    = NULL;
@@ -25,14 +29,12 @@ static convai_bridge_event_cb   g_event_cb   = NULL;
 static convai_bridge_message_cb g_message_cb = NULL;
 
 /* ---- startup config (set by settings UI, consumed by start) ---- */
-#define STARTUP_CONFIG_MAX  2048
-static char g_startup_config[STARTUP_CONFIG_MAX] = {0};
+static char g_startup_config[CONVAI_BUDGET_STARTUP_CONFIG_BYTES] = {0};
 
 /* Device name injected by app layer (e.g. WiFi MAC). NULL → use default. */
-#define DEVICE_NAME_MAX  64
-static char g_device_name[DEVICE_NAME_MAX] = {0};
+static char g_device_name[CONVAI_BUDGET_DEVICE_NAME_BYTES] = {0};
 
-static char g_json_copy_buf[2048]; /* 用于 on_message_data 回调 */
+static char g_json_copy_buf[CONVAI_BUDGET_JSON_COPY_BYTES]; /* 用于 on_message_data 回调 */
 
 /* ---- Internal accessors (consumed by audio modules) ---- */
 convai_engine_t bridge_get_engine(void) { return g_engine; }
@@ -84,6 +86,9 @@ static void on_status(convai_engine_t e, convai_status_e s, void *ud)
 
     /* Forward to downlink module for playback state machine */
     bridge_downlink_on_status(s);
+
+    /* Forward to comfort module for response-timeout arming */
+    bridge_comfort_on_status(s);
 }
 
 static void on_audio(convai_engine_t e, const void *data, size_t len,
@@ -91,6 +96,9 @@ static void on_audio(convai_engine_t e, const void *data, size_t len,
 {
     (void)e; (void)ud;
     bridge_downlink_on_audio(data, len, info);
+
+    /* TTS audio arrived — cancel any pending comfort timeout */
+    bridge_comfort_on_audio(data, len, info);
 }
 
 static void on_message_data(convai_engine_t e, const void *data, size_t len,
@@ -118,6 +126,7 @@ void convai_bridge_init(void)
 {
     if (g_engine) {
         printf("[convai_bridge] already initialized\n");
+        bridge_comfort_stop();
         return;
     }
 
@@ -131,7 +140,7 @@ void convai_bridge_init(void)
 
     /* Platform init must be done by the app layer before calling this — bridge
      * is platform-agnostic and does not call any platform-specific init. */
-    char config_json[2048];
+    char config_json[CONVAI_BUDGET_STARTUP_CONFIG_BYTES];
     const char *dev_name = g_device_name[0] ? g_device_name : NULL;
     const char *cfg = bridge_build_config_json(config_json, sizeof(config_json), dev_name);
 
@@ -224,8 +233,27 @@ static void bridge_setup(void)
 {
     if (g_started) return;
 
+    /* Initialize the app-layer codec before starting audio pipelines.
+     * The codec ID is read from convai.cfg (same "codec" key used by
+     * bridge_build_config_json) so the app codec matches what the SDK
+     * negotiated with the server. Defaults to G711A(1).
+     * This must be called here (not in convai_bridge_init) because
+     * bridge_cleanup deinitializes the codec on disconnect, and the
+     * codec must be re-initialized on every bridge start. */
+    const char *codec_str = convai_config_file_get("codec");
+    int codec_id = codec_str ? (int)strtol(codec_str, NULL, 10) : 0;  /* 默认 0=G.711A */
+    int codec_ret = app_codec_init((app_codec_id_e)codec_id);
+    if (codec_ret != APP_CODEC_OK) {
+        printf("[convai_bridge] WARNING: app_codec_init(%d) failed: %d\n",
+               codec_id, codec_ret);
+    } else {
+        printf("[convai_bridge] app codec initialized: %s (sr=%d)\n",
+               app_codec_get_name(), app_codec_get_sample_rate());
+    }
+
     bridge_uplink_start();
     bridge_downlink_start();
+    bridge_comfort_start();
 
     g_started = 1;
     g_status  = CONVAI_STATUS_IDLE;
@@ -241,7 +269,11 @@ static void bridge_cleanup(void)
     if (!g_started) return;
 
     bridge_uplink_stop();
+    bridge_comfort_stop();
     bridge_downlink_stop();
+
+    /* Deinit app-layer codec after audio pipelines are stopped. */
+    app_codec_deinit();
 
     g_started = 0;
     g_status  = CONVAI_STATUS_IDLE;
@@ -275,6 +307,7 @@ int convai_bridge_restart(void)
 convai_engine_t convai_bridge_get_engine(void)     { return g_engine; }
 convai_status_e convai_bridge_get_status(void)     { return g_status; }
 int convai_bridge_is_speaking(void)                { return (g_status == CONVAI_STATUS_ANSWERING); }
+int convai_bridge_is_started(void)                 { return g_started; }
 
 int convai_bridge_get_uplink_stats(unsigned int *frames_sent,
                                    unsigned int *frames_dropped)
@@ -295,6 +328,20 @@ int convai_bridge_send_audio(const uint8_t *data, size_t len,
     return bridge_uplink_send(data, len, info);
 }
 
+/* ---- Audio mode / PTT (forwarded to uplink module) ---- */
+int convai_bridge_set_audio_mode(convai_bridge_audio_mode_t mode)
+{
+    return bridge_uplink_set_audio_mode(mode);
+}
+convai_bridge_audio_mode_t convai_bridge_get_audio_mode(void)
+{
+    return bridge_uplink_get_audio_mode();
+}
+void convai_bridge_ptt_press(void)   { bridge_uplink_ptt_press(); }
+void convai_bridge_ptt_release(void) { bridge_uplink_ptt_release(); }
+int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed(); }
+
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }
+
