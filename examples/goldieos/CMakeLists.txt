@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.21)
 
+# ====================================================================
+#  Default codec configuration for GoldieOS example
+# ====================================================================
+set(CONVAI_DEFAULT_CODEC "0" CACHE STRING "Default audio codec: 0=G.711A, 1=PCM16, 2=Opus, 3=G.711U, 4=IMA-ADPCM")
+message(STATUS "CONVAI_DEFAULT_CODEC = ${CONVAI_DEFAULT_CODEC}")
+
+# Propagate to SDK target if it exists
+if(TARGET convai_sdk)
+    target_compile_definitions(convai_sdk PRIVATE
+        CONVAI_DEFAULT_CODEC=${CONVAI_DEFAULT_CODEC})
+endif()
+
 set(_goldieos_source_dir "${CMAKE_CURRENT_SOURCE_DIR}")
 set(_goldieos_cmake_dir "${_goldieos_source_dir}/cmake")
 
@@ -65,3 +77,4 @@ else()
     message(FATAL_ERROR
         "Unsupported GoldieOS platform: ${CONVAI_PLATFORM}")
 endif()
+

@@ -1,13 +1,13 @@
 /**
  * @file convai_audio_downlink.c
- * @brief Downlink audio pipeline: G.711A decode → ring buffer → DMA feedback playback.
+ * @brief Downlink audio pipeline: codec decode → ring buffer → DMA feedback playback.
  *
  * Owns the playback thread, ring buffer, DMA state machine, and downlink statistics.
  * Extracted from convai_bridge.c — behavior is bit-for-bit identical.
  */
 #include "convai_audio_internal.h"
 #include "convai_audio_dump.h"
-#include "convai_codec_g711a.h"
+#include "app_codec.h"
 #include "convai_memory_budget.h"
 #include "audio_service.h"
 #include "goldie_osal.h"
@@ -309,14 +309,17 @@ void bridge_downlink_on_audio(const void *data, size_t len,
 {
     (void)info;
 
-    size_t  pcm_len = 0;
-    int dec_ret = convai_g711a_decode((const uint8_t *)data, len,
-                                      g_pcm_decode_buf, sizeof(g_pcm_decode_buf), &pcm_len);
-    if (dec_ret != 0 || pcm_len == 0) {
-        printf("[convai_bridge] WARNING: g711 decode failed (ret=%d pcm_len=%zu)\n",
-               dec_ret, pcm_len);
+    int pcm_samples = 0;
+    int dec_ret = app_codec_decode((const uint8_t *)data, (int)len,
+                                   (int16_t *)g_pcm_decode_buf,
+                                   (int)(sizeof(g_pcm_decode_buf) / sizeof(int16_t)),
+                                   &pcm_samples);
+    if (dec_ret != APP_CODEC_OK || pcm_samples == 0) {
+        printf("[convai_bridge] WARNING: codec decode failed (ret=%d samples=%d)\n",
+               dec_ret, pcm_samples);
         return;
     }
+    size_t pcm_len = (size_t)pcm_samples * 2;
 
     /* If the playback thread isn't running (e.g. LOS_TaskCreate failed under
      * task-pool pressure), don't dump PCM into a ring nobody is draining — that
@@ -372,3 +375,4 @@ int bridge_downlink_get_stats(unsigned int *dropped_bytes)
     *dropped_bytes = g_playback_ctrl.dropped_bytes;
     return 0;
 }
+
