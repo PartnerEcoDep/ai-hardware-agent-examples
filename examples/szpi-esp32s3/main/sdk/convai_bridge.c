@@ -146,11 +146,11 @@ static void on_sdk_event(convai_engine_t engine, convai_event_t *event,
 
   switch (event->code) {
     case CONVAI_EV_DISCONNECTED:
-    case CONVAI_EV_FAILED:
       /* SDK gone — stop the bridge (mirror goldieos: bridge_cleanup
        * halts audio threads and resets local state). */
       convai_bridge_stop();
       break;
+    case CONVAI_EV_FAILED:
     case CONVAI_EV_CONNECTED:
     case CONVAI_EV_UPDATED:
     default:
