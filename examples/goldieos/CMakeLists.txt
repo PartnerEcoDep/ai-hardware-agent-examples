@@ -25,7 +25,14 @@ cmake_minimum_required(VERSION 3.10)
 # ====================================================================
 #  Common — shared headers, sources, and third-party code
 # ====================================================================
+set(CONVAI_DEFAULT_CODEC "0" CACHE STRING "Default audio codec: 0=G.711A, 1=PCM16, 2=Opus, 3=G.711U, 4=IMA-ADPCM")
+message(STATUS "CONVAI_DEFAULT_CODEC = ${CONVAI_DEFAULT_CODEC}")
 
+# Propagate to SDK target if it exists
+if(TARGET convai_sdk)
+    target_compile_definitions(convai_sdk PRIVATE
+        CONVAI_DEFAULT_CODEC=${CONVAI_DEFAULT_CODEC})
+endif()
 set(COMMON_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk_integration
