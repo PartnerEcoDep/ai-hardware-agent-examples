@@ -58,7 +58,6 @@ static void on_event(convai_engine_t e, convai_event_t *ev, void *ud)
     case CONVAI_EV_FAILED:
         info = ev->data.details ? ev->data.details : "";
         printf("[convai_bridge] EVENT: FAILED %s\n", ev->data.details);
-        bridge_cleanup();
         break;
     default: break;
     }
