@@ -165,7 +165,7 @@ int app_codec_adpcm_encode(const int16_t *pcm, int samples,
     if (out_bytes > cap) return APP_CODEC_ERR_BUF_TOO_SMALL;
 
     uint8_t *p = out;
-    for (int i = 0; i < samples; i += 2) {
+    for (int i = 0; i + 1 < samples; i += 2) {
         uint8_t lo = adpcm_encode_sample(pcm[i],     &s_state);
         uint8_t hi = adpcm_encode_sample(pcm[i + 1], &s_state);
         *p++ = (uint8_t)((hi << 4) | lo);
@@ -184,7 +184,7 @@ int app_codec_adpcm_decode(const uint8_t *buf, int len,
                            int16_t *pcm, int cap, int *out_samples)
 {
     int temp_samples = len * 2;
-    if (out_samples > cap) return APP_CODEC_ERR_BUF_TOO_SMALL;
+    if (temp_samples > cap) return APP_CODEC_ERR_BUF_TOO_SMALL;
 
     int16_t *p = pcm;
     for (int i = 0; i < len; i++) {
@@ -195,4 +195,5 @@ int app_codec_adpcm_decode(const uint8_t *buf, int len,
     *out_samples = temp_samples;
     return APP_CODEC_OK;
 }
+
 
