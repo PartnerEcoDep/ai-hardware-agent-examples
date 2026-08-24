@@ -365,6 +365,7 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
     const char *text;
     switch (event_type) {
         case CONVAI_EV_CONNECTED:
+		case CONVAI_EV_FAILED:
             color = 0x07E0; text = "● 已连接";
             /* PTT 模式下连接成功时显示"按住说话"按钮 */
             if (convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_PTT) {
@@ -372,7 +373,6 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
             }
             break;
         case CONVAI_EV_DISCONNECTED:
-        case CONVAI_EV_FAILED:
             color = 0x0000; text = "● 未连接";
             talk_page_set_emotion(EMOTION_NEUTRAL);
             /* Print uplink/downlink drop stats on disconnect so we can see the
