@@ -1,6 +1,6 @@
 /**
  * @file convai_audio_uplink.c
- * @brief Uplink audio pipeline: capture → stereo-to-planar → G.711A encode → send.
+ * @brief Uplink audio pipeline: capture → stereo-to-planar → codec encode → send.
  *
  * Owns the recording thread, audio hardware handle, and uplink statistics.
  * Extracted from convai_bridge.c — behavior is bit-for-bit identical.
@@ -8,7 +8,7 @@
 #include "convai_audio_internal.h"
 #include "convai_audio_dump.h"
 #include "convai_audio_diag.h"
-#include "convai_codec_g711a.h"
+#include "app_codec.h"
 #include "convai_memory_budget.h"
 #include "audio_service.h"
 #include "goldie_osal.h"
@@ -45,7 +45,7 @@ const audio_hw_info_t *bridge_get_audio_hw(void)
 }
 
 
-/* Process one mic frame: read → stereo-to-planar → G.711A encode → send.
+/* Process one mic frame: read → stereo-to-planar → codec encode → send.
  * Returns 1 if a frame was successfully sent, 0 if no data / encode failed /
  * send dropped. The static buffers are safe because the recording thread is
  * single per session — AUTO runs one, PTT runs one, never concurrently
@@ -83,18 +83,18 @@ static int capture_one_frame(audio_source_t *s, AudioService *audio)
     /* Diagnostics: read-only metrics over the planar buffer (rmsL/rmsR/dc/zeros)
      * + vad_detect probe. Does not touch planar_buf/g711_buf or the encode path. */
     audio_diag_update(audio, planar_samples, (size_t)frame_count, 1);
-    size_t g711_len = 0;
-    int enc_ret = convai_g711a_encode(planar_buf, (size_t)len, 2,
-                                      g711_buf, CONVAI_BUDGET_AUDIO_RECORD_BYTES,
-                                      &g711_len);
-    if (enc_ret != 0 || g711_len == 0) {
-        printf("[convai_bridge] WARNING: g711 encode failed\n");
+    int enc_len = 0;
+    int enc_ret = app_codec_encode(planar_samples, sample_count,
+                                   g711_buf, CONVAI_BUDGET_AUDIO_RECORD_BYTES,
+                                   &enc_len);
+    if (enc_ret != APP_CODEC_OK || enc_len == 0) {
+        printf("[convai_bridge] WARNING: codec encode failed (ret=%d)\n", enc_ret);
         return 0;
     }
     convai_audio_frame_info_t info;
     memset(&info, 0, sizeof(info));
-    info.data_type = CONVAI_AUDIO_DATA_TYPE_G711A;
-    if (bridge_uplink_send(g711_buf, g711_len, &info) == 0) {
+    info.data_type = (convai_audio_data_type_e)app_codec_get_id();
+    if (bridge_uplink_send(g711_buf, (size_t)enc_len, &info) == 0) {
         s->frames_sent++;
         return 1;
     }
@@ -108,7 +108,7 @@ static void ptt_send_commit(void)
     printf("[convai_bridge] PTT: sending commit=1 (triggering AI response)\n");
     convai_audio_frame_info_t info;
     memset(&info, 0, sizeof(info));
-    info.data_type = CONVAI_AUDIO_DATA_TYPE_G711A;
+    info.data_type = (convai_audio_data_type_e)app_codec_get_id();
     info.commit    = 1;
     bridge_uplink_send(NULL, 0, &info);
 }
@@ -418,3 +418,4 @@ int bridge_uplink_ptt_is_pressed(void)
 {
     return g_audio_src.ptt_pressed;
 }
+

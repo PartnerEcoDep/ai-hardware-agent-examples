@@ -11,13 +11,13 @@
 #include <stdio.h>
 #include <string.h>
 
-#define BRIDGE_DEFAULT_BOT_ID         "your_agent_id"       // ← 替换为实际的 agent_id
-#define BRIDGE_DEFAULT_PRODUCT_ID     "your_product_id"     // ← 替换为实际的 product_id
-#define BRIDGE_DEFAULT_PRODUCT_KEY    "your_product_key"    // ← 替换为实际的 product_key
-#define BRIDGE_DEFAULT_PRODUCT_SECRET "your_product_secret" // ← 替换为实际的 product_secret
-#define BRIDGE_DEFAULT_DEVICE_NAME    "your_device_name"    // ← 替换为实际的 device_name
+#define BRIDGE_DEFAULT_BOT_ID         "your_agent_id"       // <- 替换为实际的 agent_id
+#define BRIDGE_DEFAULT_PRODUCT_ID     "your_product_id"     // <- 替换为实际的 product_id
+#define BRIDGE_DEFAULT_PRODUCT_KEY    "your_product_key"    // <- 替换为实际的 product_key
+#define BRIDGE_DEFAULT_PRODUCT_SECRET "your_product_secret" // <- 替换为实际的 product_secret
+#define BRIDGE_DEFAULT_DEVICE_NAME    "your_device_name"    // <- 替换为实际的 device_name
 /* WS63: device_name 实际由 WiFi MAC 生成（见 ws63_device_id()），此值仅作兜底 */
-#define BRIDGE_DEFAULT_API_KEY        NULL                  // ← 使用 convai.cfg 中的 api_key
+#define BRIDGE_DEFAULT_API_KEY        NULL                  // <- 使用 convai.cfg 中的 api_key
 
 /* ---- Default startup config (AI personality/voice) ---- */
 #define DEFAULT_STARTUP_CONFIG \
@@ -119,3 +119,4 @@ const char *bridge_build_config_json(char *buf, size_t buf_size,
     (void)n; /* truncation is acceptable — engine will reject malformed JSON */
     return buf;
 }
+

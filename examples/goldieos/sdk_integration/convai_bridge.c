@@ -14,9 +14,11 @@
 #include "convai_memory_budget.h"
 #include "service_manager.h"
 #include "goldie_osal.h"
+#include "app_codec.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* ---- internal state ---- */
 static convai_engine_t          g_engine    = NULL;
@@ -58,6 +60,7 @@ static void on_event(convai_engine_t e, convai_event_t *ev, void *ud)
     case CONVAI_EV_FAILED:
         info = ev->data.details ? ev->data.details : "";
         printf("[convai_bridge] EVENT: FAILED %s\n", ev->data.details);
+        bridge_cleanup();
         break;
     default: break;
     }
@@ -230,6 +233,24 @@ static void bridge_setup(void)
 {
     if (g_started) return;
 
+    /* Initialize the app-layer codec before starting audio pipelines.
+     * The codec ID is read from convai.cfg (same "codec" key used by
+     * bridge_build_config_json) so the app codec matches what the SDK
+     * negotiated with the server. Defaults to G711A(1).
+     * This must be called here (not in convai_bridge_init) because
+     * bridge_cleanup deinitializes the codec on disconnect, and the
+     * codec must be re-initialized on every bridge start. */
+    const char *codec_str = convai_config_file_get("codec");
+    int codec_id = codec_str ? (int)strtol(codec_str, NULL, 10) : 0;  /* 默认 0=G.711A */
+    int codec_ret = app_codec_init((app_codec_id_e)codec_id);
+    if (codec_ret != APP_CODEC_OK) {
+        printf("[convai_bridge] WARNING: app_codec_init(%d) failed: %d\n",
+               codec_id, codec_ret);
+    } else {
+        printf("[convai_bridge] app codec initialized: %s (sr=%d)\n",
+               app_codec_get_name(), app_codec_get_sample_rate());
+    }
+
     bridge_uplink_start();
     bridge_downlink_start();
     bridge_comfort_start();
@@ -250,6 +271,9 @@ static void bridge_cleanup(void)
     bridge_uplink_stop();
     bridge_comfort_stop();
     bridge_downlink_stop();
+
+    /* Deinit app-layer codec after audio pipelines are stopped. */
+    app_codec_deinit();
 
     g_started = 0;
     g_status  = CONVAI_STATUS_IDLE;
@@ -320,3 +344,4 @@ int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed();
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }
+
