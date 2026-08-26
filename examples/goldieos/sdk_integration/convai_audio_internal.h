@@ -51,6 +51,20 @@ void bridge_uplink_ptt_press(void);
 void bridge_uplink_ptt_release(void);
 int  bridge_uplink_ptt_is_pressed(void);
 
+/* FE2026072900158: TAP2TALK control */
+void bridge_uplink_tap_start(void);
+void bridge_uplink_tap_stop(void);
+int  bridge_uplink_tap_is_active(void);
+
+/* FE2026072900158: TAP2TALK control */
+void bridge_uplink_tap_start(void);
+void bridge_uplink_tap_stop(void);
+int  bridge_uplink_tap_is_active(void);
+
+/* FE2026072900158: Apply turn_detection config to server based on current audio mode.
+ * Called automatically after session starts. Can also be called manually if needed. */
+void bridge_apply_turn_detection(void);
+
 /* ---- Downlink module (convai_audio_downlink.c) ---- */
 
 void bridge_downlink_start(void);
@@ -65,3 +79,4 @@ int  bridge_downlink_get_stats(unsigned int *dropped_bytes);
 #endif
 
 #endif /* CONVAI_AUDIO_INTERNAL_H */
+

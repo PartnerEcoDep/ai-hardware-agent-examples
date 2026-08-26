@@ -111,6 +111,13 @@ int talk_page_is_visible(void)
 
 void talk_page_set_emotion(int emotion)
 {
+    /* FE2026072900158: PTT 和 TAP2TALK 模式下屏蔽表情，始终显示 NEUTRAL。
+     * 这两种模式下用户通过按钮主动交互，不需要表情反馈。 */
+    convai_bridge_audio_mode_t mode = convai_bridge_get_audio_mode();
+    if (mode == CONVAI_BRIDGE_AUDIO_PTT || mode == CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+        talk_current_emotion = EMOTION_NEUTRAL;
+        return;
+    }
     talk_current_emotion = emotion;
 }
 

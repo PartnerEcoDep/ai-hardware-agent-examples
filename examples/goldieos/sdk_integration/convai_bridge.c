@@ -12,6 +12,7 @@
 #include "convai_audio_internal.h"
 #include "convai_comfort.h"
 #include "convai_memory_budget.h"
+#include "convai/audio_mode.h"  /* FE2026072900158: turn_detection JSON generator */
 #include "service_manager.h"
 #include "goldie_osal.h"
 #include "app_codec.h"
@@ -60,7 +61,6 @@ static void on_event(convai_engine_t e, convai_event_t *ev, void *ud)
     case CONVAI_EV_FAILED:
         info = ev->data.details ? ev->data.details : "";
         printf("[convai_bridge] EVENT: FAILED %s\n", ev->data.details);
-        bridge_cleanup();
         break;
     default: break;
     }
@@ -260,6 +260,12 @@ static void bridge_setup(void)
     if (g_status_cb) g_status_cb(g_status);
 
     printf("[convai_bridge] bridge setup done (IDLE)\n");
+
+    /* FE2026072900158: 根据音频模式下发 turn_detection 配置到服务端。
+     * PTT(push2talk) 发送 turn_detection: null；
+     * TAP2TALK 发送 server_vad + idle_timeout_ms=5000 + interrupt_response=false；
+     * AUTO 为旧模式（即全双工），不下发 turn_detection（向后兼容）。 */
+    bridge_apply_turn_detection();
 }
 
 /* Clean up bridge-layer resources: audio threads, hardware, state.
@@ -304,6 +310,63 @@ int convai_bridge_restart(void)
     return convai_bridge_start();
 }
 
+/* FE2026072900158: 根据当前音频模式生成 turn_detection JSON 并通过 convai_update
+ * 下发到服务端。映射关系：
+ *   PTT      → vad_enabled=0 → turn_detection: null（关闭VAD，客户端完全控制）
+ *   TAP2TALK → vad_enabled=1, voice_interrupt=0, tap2talk_timeout_ms=5000
+ *   AUTO     → vad_enabled=1, voice_interrupt=1 → server_vad + interrupt_response=true（全双工） */
+void bridge_apply_turn_detection(void)
+{
+    if (!g_engine || !g_started) return;
+
+    convai_bridge_audio_mode_t mode = bridge_uplink_get_audio_mode();
+
+    convai_audio_mode_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+
+    switch (mode) {
+    case CONVAI_BRIDGE_AUDIO_PTT:
+        cfg.vad_enabled         = 0;
+        cfg.voice_interrupt     = 0;
+        cfg.tap2talk_timeout_ms = 0;
+        break;
+    case CONVAI_BRIDGE_AUDIO_TAP2TALK:
+        cfg.vad_enabled         = 1;
+        cfg.voice_interrupt     = 0;
+        cfg.tap2talk_timeout_ms = 5000;
+        break;
+    case CONVAI_BRIDGE_AUDIO_AUTO:
+        cfg.vad_enabled         = 1;
+        cfg.voice_interrupt     = 1;
+        cfg.tap2talk_timeout_ms = 0;
+        break;
+    default:
+        return;
+    }
+
+    char session_update[512];
+    if (convai_audio_mode_generate_session_update(&cfg, session_update,
+                                                  sizeof(session_update)) != 0) {
+        printf("[convai_bridge] ERROR: generate turn_detection JSON failed\n");
+        return;
+    }
+
+    int ret = convai_update(g_engine, session_update);
+    if (ret != CONVAI_OK) {
+        printf("[convai_bridge] ERROR: convai_update failed: %s\n", convai_err_2_str(ret));
+        return;
+    }
+
+    const char *mode_name = "?";
+    switch (mode) {
+    case CONVAI_BRIDGE_AUDIO_PTT:      mode_name = "PTT"; break;
+    case CONVAI_BRIDGE_AUDIO_TAP2TALK: mode_name = "TAP2TALK"; break;
+    case CONVAI_BRIDGE_AUDIO_AUTO:     mode_name = "AUTO"; break;
+    default: break;
+    }
+    printf("[convai_bridge] turn_detection applied for mode: %s\n", mode_name);
+}
+
 convai_engine_t convai_bridge_get_engine(void)     { return g_engine; }
 convai_status_e convai_bridge_get_status(void)     { return g_status; }
 int convai_bridge_is_speaking(void)                { return (g_status == CONVAI_STATUS_ANSWERING); }
@@ -337,11 +400,48 @@ convai_bridge_audio_mode_t convai_bridge_get_audio_mode(void)
 {
     return bridge_uplink_get_audio_mode();
 }
-void convai_bridge_ptt_press(void)   { bridge_uplink_ptt_press(); }
+void convai_bridge_ptt_press(void)
+{
+    /* FE2026072900158: PTT打断 — AI说话时按住按钮先打断TTS播放。
+     * 必须在此处（convai_bridge.c）处理，因为需要更新 g_status。
+     * 若在 uplink 模块处理，g_status 仍为 ANSWERING，导致后续状态流转异常。 */
+    if (g_status == CONVAI_STATUS_ANSWERING && g_engine) {
+        int ret = convai_interrupt(g_engine);
+        if (ret == CONVAI_OK) {
+            printf("[convai_bridge] PTT: interrupted AI speech (ANSWERING → INTERRUPTED)\n");
+            g_status = CONVAI_STATUS_INTERRUPTED;
+            bridge_downlink_on_status(CONVAI_STATUS_INTERRUPTED);
+        } else {
+            printf("[convai_bridge] PTT: interrupt failed: %s\n", convai_err_2_str(ret));
+        }
+    }
+    bridge_uplink_ptt_press();
+}
 void convai_bridge_ptt_release(void) { bridge_uplink_ptt_release(); }
 int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed(); }
+
+/* FE2026072900158: TAP2TALK wrappers */
+void convai_bridge_tap_start(void)
+{
+    /* TAP打断 — AI说话时第一次点击先打断TTS播放，再开始录音。
+     * 必须在此处（convai_bridge.c）处理，因为需要更新 g_status。 */
+    if (g_status == CONVAI_STATUS_ANSWERING && g_engine) {
+        int ret = convai_interrupt(g_engine);
+        if (ret == CONVAI_OK) {
+            printf("[convai_bridge] TAP: interrupted AI speech (ANSWERING → INTERRUPTED)\n");
+            g_status = CONVAI_STATUS_INTERRUPTED;
+            bridge_downlink_on_status(CONVAI_STATUS_INTERRUPTED);
+        } else {
+            printf("[convai_bridge] TAP: interrupt failed: %s\n", convai_err_2_str(ret));
+        }
+    }
+    bridge_uplink_tap_start();
+}
+void convai_bridge_tap_stop(void)   { bridge_uplink_tap_stop(); }
+int  convai_bridge_tap_is_active(void) { return bridge_uplink_tap_is_active(); }
 
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }
+
 

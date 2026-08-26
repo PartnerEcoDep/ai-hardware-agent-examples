@@ -28,8 +28,9 @@ typedef struct {
     goldie_sem    exit_sem;            /* posted by thread on exit (join waits) */
     unsigned int  frames_sent;         /* mic frames successfully enqueued */
     unsigned int  frames_dropped;      /* mic frames dropped (send failed) */
-    convai_bridge_audio_mode_t mode;   /* AUTO or PTT (bound to the session) */
+    convai_bridge_audio_mode_t mode;   /* AUTO, PTT, or TAP2TALK (bound to the session) */
     volatile int  ptt_pressed;         /* PTT button state (press=1/release=0, app reads via is_pressed) */
+    volatile int  tap_active;          /* FE2026072900158: TAP2TALK recording state (toggle: 1=recording, 0=idle) */
 } audio_source_t;
 
 static audio_source_t g_audio_src = {0};
@@ -189,6 +190,37 @@ static int ptt_record_thread(void *arg)
     return 0;
 }
 
+/* FE2026072900158: TAP2TALK record thread.
+ * Similar to PTT but with toggle behavior and NO commit.
+ * tap_start sets tap_active=1, tap_stop sets tap_active=0.
+ * Server-side VAD + idle_timeout detects end of speech — no client commit. */
+static int tap2talk_record_thread(void *arg)
+{
+    (void)arg;
+    audio_source_t *s = &g_audio_src;
+    AudioService *audio = (AudioService *)s->audio_service;
+
+    printf("[convai_bridge] TAP2TALK: resident thread ready (sr=%d)\n", s->sample_rate);
+    while (s->running) {
+        if (!s->tap_active) {
+            goldie_msleep(10);   /* idle: poll for tap every 10ms */
+            continue;
+        }
+        /* capture until tap_stop or session stop */
+        if (audio->record_start) audio->record_start();
+        printf("[convai_bridge] TAP2TALK: capture started\n");
+        while (s->running && s->tap_active) {
+            capture_one_frame(s, audio);
+        }
+        if (audio->record_stop) audio->record_stop();
+        printf("[convai_bridge] TAP2TALK: capture stopped (no commit — server VAD handles end)\n");
+        /* No commit here — server VAD + idle_timeout detects speech end */
+    }
+    printf("[convai_bridge] TAP2TALK: resident thread exiting\n");
+    goldie_sem_post(&s->exit_sem);
+    return 0;
+}
+
 /* ---- Module entry points ---- */
 
 void bridge_uplink_set_audio_source(void *src, int sr, int ch, int bits)
@@ -238,6 +270,7 @@ static int start_record_thread(int (*fn)(void *), const char *tag)
     } else {
         g_audio_src.running = 0;
         g_audio_src.ptt_pressed = 0;
+        g_audio_src.tap_active = 0;
         goldie_sem_destroy(&g_audio_src.exit_sem);
         bridge_dump_close(BRIDGE_AUDIO_DUMP_UPLINK);
         printf("[convai_bridge] ERROR: %s record thread create failed — mic input disabled\n", tag);
@@ -260,6 +293,7 @@ static void join_record_thread(void)
     }
     g_audio_src.running = 0;
     g_audio_src.ptt_pressed = 0;
+    g_audio_src.tap_active = 0;
 
     /* Stop audio capture (in case the thread was mid-capture when stopped) */
     AudioService *audio = (AudioService *)g_audio_src.audio_service;
@@ -281,12 +315,16 @@ void bridge_uplink_start(void)
     }
     if (g_audio_src.running) return;
 
-    /* Both modes create a SESSION-LIFETIME recording thread at start. AUTO runs
-     * the capture loop continuously; PTT's thread idles polling ptt_pressed
-     * (resident). Press/release are plain volatile writes, not create/destroy.
-     * Downlink (playback) is started separately by bridge_setup. */
+    /* Each mode creates a SESSION-LIFETIME recording thread at start.
+     * AUTO runs capture continuously; PTT/TAP2TALK idle-poll their respective
+     * flags (ptt_pressed / tap_active). Press/release/tap are plain volatile
+     * writes, not create/destroy. Downlink (playback) is started separately.
+     * FE2026072900158: TAP2TALK uses its own thread — no commit, server VAD
+     * detects speech end. */
     if (g_audio_src.mode == CONVAI_BRIDGE_AUDIO_PTT) {
         start_record_thread(ptt_record_thread, "PTT");
+    } else if (g_audio_src.mode == CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+        start_record_thread(tap2talk_record_thread, "TAP2TALK");
     } else {
         start_record_thread(auto_record_thread, "AUTO");
     }
@@ -348,14 +386,18 @@ int bridge_uplink_set_audio_mode(convai_bridge_audio_mode_t mode)
     /* Mode is bound to a session: refuse to switch mid-session. The recording
      * thread runs under a fixed mode; changing mode needs stop+restart. */
     if (bridge_is_started()) {
-        printf("[convai_bridge] set_audio_mode(%s) refused: session active, stop first\n",
-               mode == CONVAI_BRIDGE_AUDIO_AUTO ? "AUTO" : "PTT");
+        printf("[convai_bridge] set_audio_mode(%d) refused: session active, stop first\n", mode);
         return -1;
     }
     if (g_audio_src.mode != mode) {
         g_audio_src.mode = mode;
-        printf("[convai_bridge] audio mode set to: %s\n",
-               mode == CONVAI_BRIDGE_AUDIO_AUTO ? "AUTO" : "PTT");
+        const char *mode_name = "AUTO";
+        switch (mode) {
+            case CONVAI_BRIDGE_AUDIO_PTT:      mode_name = "PTT"; break;
+            case CONVAI_BRIDGE_AUDIO_TAP2TALK: mode_name = "TAP2TALK"; break;
+            default: break;
+        }
+        printf("[convai_bridge] audio mode set to: %s\n", mode_name);
     }
     return 0;
 }
@@ -417,5 +459,54 @@ void bridge_uplink_ptt_release(void)
 int bridge_uplink_ptt_is_pressed(void)
 {
     return g_audio_src.ptt_pressed;
+}
+
+/* ===================================================================
+ *  FE2026072900158: TAP2TALK (tap-to-talk) control
+ *
+ *  Tap behavior: first tap starts recording (tap_active=1), second tap stops
+ *  (tap_active=0). Server-side VAD + idle_timeout detects end of speech.
+ *  NO commit is sent — unlike PTT's release-triggered commit.
+ * =================================================================== */
+
+void bridge_uplink_tap_start(void)
+{
+    if (g_audio_src.mode != CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+        printf("[convai_bridge] TAP start ignored (not in TAP2TALK mode)\n");
+        return;
+    }
+    if (!bridge_is_started()) {
+        printf("[convai_bridge] TAP start ignored (engine not started)\n");
+        return;
+    }
+    if (!g_audio_src.running) {
+        printf("[convai_bridge] TAP start ignored (record thread not running)\n");
+        return;
+    }
+    if (g_audio_src.tap_active) {
+        printf("[convai_bridge] TAP: already active\n");
+        return;
+    }
+    g_audio_src.tap_active = 1;
+    printf("[convai_bridge] TAP: recording started\n");
+}
+
+void bridge_uplink_tap_stop(void)
+{
+    if (g_audio_src.mode != CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+        printf("[convai_bridge] TAP stop ignored (not in TAP2TALK mode)\n");
+        return;
+    }
+    if (!g_audio_src.tap_active) {
+        printf("[convai_bridge] TAP: not active\n");
+        return;
+    }
+    g_audio_src.tap_active = 0;
+    printf("[convai_bridge] TAP: recording stopped (server VAD handles end)\n");
+}
+
+int bridge_uplink_tap_is_active(void)
+{
+    return g_audio_src.tap_active;
 }
 
