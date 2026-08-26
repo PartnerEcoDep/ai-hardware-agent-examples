@@ -45,7 +45,7 @@
 /* ===================================================================
  *  I2S 音频接口
  *
- *  采样率: 输入 24000Hz / 输出 24000Hz
+ *  采样率: 输入 8000Hz / 输出 8000Hz (与 ConvAI G.711A 内容 1:1 对齐)
  *  ES7210: 3路 MIC 输入 (MIC1/MIC2 用于立体声, MIC3 回采 DAC 做 AEC)
  *  ES8311: DAC 音频输出
  * =================================================================== */
@@ -55,7 +55,7 @@
 #define AUDIO_I2S_DIN_PIN        GPIO_NUM_12     /* I2S 数据输入 (麦克风) */
 #define AUDIO_I2S_DOUT_PIN       GPIO_NUM_45     /* I2S 数据输出 (扬声器) */
 
-#define AUDIO_SAMPLE_RATE        24000
+#define AUDIO_SAMPLE_RATE        8000
 #define AUDIO_BITS_PER_SAMPLE    16
 #define AUDIO_CHANNELS           1               /* 单声道 */
 
