@@ -8,10 +8,15 @@
 #include "esp_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdlib.h>
+#include <time.h>
 
 static const char *TAG = "sntp_init";
 
 void sntp_init_sync(void) {
+  setenv("TZ", "CST-8", 1);
+  tzset();
+
   esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
   esp_sntp_setservername(0, "pool.ntp.org");
   esp_sntp_setservername(1, "ntp.aliyun.com");

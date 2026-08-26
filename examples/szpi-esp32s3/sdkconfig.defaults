@@ -86,3 +86,8 @@ CONFIG_LV_FONT_MONTSERRAT_16=y
 # 否则所有未显式指定字体的对象（主题、按钮内部 label 等）
 # 都会用 CJK 字体渲染英文，显示效果不一致
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
+
+# ---- 日志时间戳 ----
+# 使用系统时间 (HH:MM:SS.sss, SNTP 同步后为真实时间) 而非 RTOS tick,
+# 与 SDK 侧 [YYYY-MM-DD HH:MM:SS] 时间戳对齐, 便于排查音频到达时序
+CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM=y
