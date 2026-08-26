@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file ai_chat_ui.c
  * @brief Chat UI orchestrator: model, shared helpers, public API.
  *
@@ -365,6 +365,7 @@ void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info) {
     case CONVAI_EV_DISCONNECTED:
     case CONVAI_EV_FAILED:
       ai_chat_ui_set_cloud(false);
+      ai_chat_ui_set_state(STATE_IDLE);
       break;
     case CONVAI_EV_UPDATED:
     default:
