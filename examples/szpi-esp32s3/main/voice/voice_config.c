@@ -93,6 +93,12 @@ static void nvs_save_voice_id(int id) {
     nvs_close(handle);
 }
 
+/* NVS 持久化 (flash 写会禁用 cache), 只能在内部 RAM 栈的任务里调用。
+ * voice_apply_task 是 PSRAM 栈, 不能在这里做 flash 写; 由 LVGL 事件回调调用。 */
+void voice_config_persist(int voice_id) {
+    nvs_save_voice_id(voice_id);
+}
+
 /* ---- 公开 API ---- */
 
 int voice_config_init(void) {
@@ -140,7 +146,6 @@ int voice_config_set(convai_engine_t engine, int voice_id) {
     /* 会话未连接时 SDK 的 convai_update 会返回 INVALID_STATE, 只保存配置 */
     if (!convai_bridge_is_started()) {
         printf("[%s] session not started, config saved for next connect\n", TAG);
-        nvs_save_voice_id(voice_id);
         return 0;
     }
 
@@ -152,7 +157,6 @@ int voice_config_set(convai_engine_t engine, int voice_id) {
         return -1;
     }
 
-    nvs_save_voice_id(voice_id);
     printf("[%s] convai_update OK\n", TAG);
 
     return 0;

@@ -47,8 +47,14 @@ int  voice_config_init(void);
 int  voice_config_get(void);
 const char *voice_config_get_type(void);
 
-/* 切换音色：保存 NVS + bridge startup 配置；会话已连接时调 convai_update */
+/* 切换音色：更新 bridge startup 配置；会话已连接时调 convai_update。
+ * 注意: 本函数不得从 PSRAM 栈任务调用（内部会做网络往返）；
+ *       NVS 持久化由 voice_config_persist() 在内部 RAM 栈上下文调用。 */
 int  voice_config_set(convai_engine_t engine, int voice_id);
+
+/* 把当前/指定音色索引写入 NVS (flash 写, 会禁用 cache)。
+ * 必须在内部 RAM 栈的任务里调用, 不能从 PSRAM 栈任务调用。 */
+void voice_config_persist(int voice_id);
 
 /* 生成完整 startup JSON（含 llm_config + tts_config） */
 int  voice_config_build_json(char *buf, size_t size, const char *system_message);

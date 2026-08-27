@@ -270,7 +270,7 @@ static const char *TAG = "voice_sel";
 #define GENDER_IDX_FEMALE   0
 #define GENDER_IDX_MALE     1
 
-static const char *const kGenderIcons[VOICE_GENDER_COUNT] = {"F", "M"};
+static const char *const kGenderIcons[VOICE_GENDER_COUNT] = {"女", "男"};
 
 static lv_obj_t *create_flat_button(lv_obj_t *parent, int w, int h, int x,
                                     int y, lv_color_t bg, lv_opa_t bg_opa,
@@ -290,7 +290,7 @@ static lv_obj_t *create_flat_button(lv_obj_t *parent, int w, int h, int x,
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, text);
   lv_obj_set_style_text_color(label, C_TEXT, 0);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(label, &lv_font_custom_cjk_14, 0);
   lv_obj_center(label);
   return btn;
 }
@@ -410,6 +410,10 @@ static void on_voice_sel_confirm(lv_event_t *e) {
   voice_gender_t gender = (voice_gender_t)vs->gender_idx;
   int voice_id = voice_factory_gender_voice_id(gender, vs->timbre_idx);
 
+  /* NVS 写 (flash 禁用 cache) 必须在内部 RAM 栈执行: 这里在 LVGL 事件上下文,
+   * 栈在内置 RAM, 安全。voice_apply_task 是 PSRAM 栈, 不能做 flash 写。 */
+  voice_config_persist(voice_id);
+
   s_voice_applying = true;
   voice_sel_close();
   /* 栈放 PSRAM: 内部 RAM 紧张时 xTaskCreate 偶发失败 */
@@ -445,20 +449,20 @@ static void create_voice_select_viz(void) {
                                     lv_color_hex(0x374151), LV_OPA_COVER, "<",
                                     on_voice_sel_back, NULL);
   vs->btn_save = create_flat_button(vs->panel, 50, 28, 264, 6, C_BLUE,
-                                    LV_OPA_COVER, "OK", on_voice_sel_confirm,
+                                    LV_OPA_COVER, "确定", on_voice_sel_confirm,
                                     NULL);
 
   vs->title_label = lv_label_create(vs->panel);
-  lv_label_set_text(vs->title_label, "Voice");
+  lv_label_set_text(vs->title_label, "音色");
   lv_obj_set_style_text_color(vs->title_label, C_TEXT, 0);
-  lv_obj_set_style_text_font(vs->title_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(vs->title_label, &lv_font_custom_cjk_14, 0);
   lv_obj_align(vs->title_label, LV_ALIGN_TOP_MID, 0, 12);
 
   vs->btn_male = create_flat_button(vs->panel, 70, 28, 80, 42, C_BLUE,
-                                    LV_OPA_20, "Male", on_gender_btn_click,
+                                    LV_OPA_20, "男声", on_gender_btn_click,
                                     (void *)(intptr_t)GENDER_IDX_MALE);
   vs->btn_female = create_flat_button(vs->panel, 70, 28, 170, 42, C_PURPLE,
-                                      LV_OPA_20, "Female", on_gender_btn_click,
+                                      LV_OPA_20, "女声", on_gender_btn_click,
                                       (void *)(intptr_t)GENDER_IDX_FEMALE);
 
   vs->icon_label = lv_obj_create(vs->panel);
@@ -473,9 +477,9 @@ static void create_voice_select_viz(void) {
                     LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
 
   vs->icon_text = lv_label_create(vs->icon_label);
-  lv_label_set_text(vs->icon_text, "M");
+  lv_label_set_text(vs->icon_text, "女");
   lv_obj_set_style_text_color(vs->icon_text, C_TEXT, 0);
-  lv_obj_set_style_text_font(vs->icon_text, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(vs->icon_text, &lv_font_custom_cjk_14, 0);
   lv_obj_center(vs->icon_text);
 
   vs->name_label =
