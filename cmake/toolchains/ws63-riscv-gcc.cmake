@@ -26,6 +26,13 @@ list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES WS63_TOOLCHAIN_ROOT)
 set(_WS63_TOOLCHAIN_BIN "${WS63_TOOLCHAIN_ROOT}/bin")
 set(_WS63_TOOL_PREFIX "${_WS63_TOOLCHAIN_BIN}/riscv32-linux-musl")
 
+# cc1.exe (the compiler frontend spawned by the gcc driver) depends on
+# libssp-0.dll and other runtime DLLs located in the toolchain bin directory.
+# Windows DLL search only looks in PATH, so we must prepend the bin dir.
+if(NOT "$ENV{PATH}" MATCHES "${_WS63_TOOLCHAIN_BIN}")
+    set(ENV{PATH} "${_WS63_TOOLCHAIN_BIN};$ENV{PATH}")
+endif()
+
 foreach(_WS63_REQUIRED_TOOL IN ITEMS gcc g++ ar ranlib objcopy size)
     if(NOT EXISTS "${_WS63_TOOL_PREFIX}-${_WS63_REQUIRED_TOOL}.exe")
         message(FATAL_ERROR
@@ -45,6 +52,22 @@ set(CMAKE_C_COMPILER "${_WS63_TOOL_PREFIX}-gcc.exe" CACHE FILEPATH
     "WS63 C compiler")
 set(CMAKE_CXX_COMPILER "${_WS63_TOOL_PREFIX}-g++.exe" CACHE FILEPATH
     "WS63 C++ compiler")
+
+# Use compiler launchers to ensure toolchain bin directory is in PATH during
+# build, so cc1.exe can find libssp-0.dll and other runtime DLLs.
+set(_WS63_LAUNCHER "${CMAKE_CURRENT_LIST_DIR}/ws63-compiler-launcher.bat")
+set(CMAKE_C_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
+    "WS63 C compiler launcher")
+set(CMAKE_CXX_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
+    "WS63 C++ compiler launcher")
+
+# Use compiler launchers to ensure toolchain bin directory is in PATH during
+# build, so cc1.exe can find libssp-0.dll and other runtime DLLs.
+set(_WS63_LAUNCHER "${CMAKE_CURRENT_LIST_DIR}/ws63-compiler-launcher.bat")
+set(CMAKE_C_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
+    "WS63 C compiler launcher")
+set(CMAKE_CXX_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
+    "WS63 C++ compiler launcher")
 set(CMAKE_AR "${_WS63_TOOL_PREFIX}-ar.exe" CACHE FILEPATH
     "WS63 archiver")
 set(CMAKE_RANLIB "${_WS63_TOOL_PREFIX}-ranlib.exe" CACHE FILEPATH
@@ -78,3 +101,4 @@ unset(_WS63_REPOSITORY_ROOT)
 unset(_WS63_REQUIRED_TOOL)
 unset(_WS63_TOOLCHAIN_BIN)
 unset(_WS63_TOOL_PREFIX)
+

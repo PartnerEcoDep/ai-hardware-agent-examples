@@ -8,8 +8,11 @@ message(STATUS "CONVAI_DEFAULT_CODEC = ${CONVAI_DEFAULT_CODEC}")
 
 # Propagate to SDK target if it exists
 if(TARGET convai_sdk)
-    target_compile_definitions(convai_sdk PRIVATE
-        CONVAI_DEFAULT_CODEC=${CONVAI_DEFAULT_CODEC})
+    get_target_property(_convai_sdk_imported convai_sdk IMPORTED)
+    if(NOT _convai_sdk_imported)
+        target_compile_definitions(convai_sdk PRIVATE
+            CONVAI_DEFAULT_CODEC=${CONVAI_DEFAULT_CODEC})
+    endif()
 endif()
 
 set(_goldieos_source_dir "${CMAKE_CURRENT_SOURCE_DIR}")
