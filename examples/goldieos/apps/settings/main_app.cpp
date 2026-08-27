@@ -40,8 +40,8 @@ static uint16_t* avatar_pic_list[] = {
 };
 
 /* Uncomment to select voice type */
-#define CONVAI_USE_MINIMAX_VOICE   /* MiniMax voices */
-// #define CONVAI_USE_OLD_VOICE       /* Old style voices */
+// #define CONVAI_USE_MINIMAX_VOICE   /* MiniMax voices */
+#define CONVAI_USE_IFLYTEK_VOICE  /* IFLYTEK voices */
 
 #if defined(CONVAI_USE_MINIMAX_VOICE)
 /* MiniMax voices */
@@ -62,17 +62,19 @@ static const char* voice_list_male[] = {
     "    憨憨萌兽",
     "    机械战甲"
 };
-#elif defined(CONVAI_USE_OLD_VOICE)
+#elif defined(CONVAI_USE_IFLYTEK_VOICE)
 /* Old style voices */
 static const char* voice_list_female[] = {
-    "    迷人女友",
-    "    温柔姐姐"
+    "    null",
+    "    小青",
+    "    小燕",
+    "    叶子"
 };
 
 static const char* voice_list_male[] = {
-    "    儒雅大叔",
-    "    北京小爷",
-    "    四川小伙"
+    "    null",
+    "    许小宝",
+    "    许久"
 };
 #else
 /* X4 voices (default) */
@@ -131,17 +133,19 @@ static const char* voice_type_male[] = {
     "Chinese (Mandarin)_Cute_Spirit",
     "Robot_Armor"
 };
-#elif defined(CONVAI_USE_OLD_VOICE)
+#elif defined(CONVAI_USE_IFLYTEK_VOICE)
 /* Old style voices */
 static const char* voice_type_female[] = {
-    "CharmingGirlfriend",
-    "GentleSister"
+    "",
+    "AISJINGER",
+    "X4_XIAOYAN",
+    "X4_YEZI"
 };
 
 static const char* voice_type_male[] = {
-    "ElegantUncle",
-    "BeijingYoungMaster",
-    "SichuanBoy"
+    "",
+    "AISBABYXU",
+    "AISJIUXU"
 };
 #else
 static const char* voice_type_female[] = {
