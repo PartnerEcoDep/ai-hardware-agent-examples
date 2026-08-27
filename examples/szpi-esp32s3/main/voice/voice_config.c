@@ -1,4 +1,5 @@
 #include "voice_config.h"
+#include "voice_tables.h"   /* 音色数据源 + gender 映射 (增删音色只改这里) */
 #include "convai_api.h"  /* convai_update */
 #include "convai_bridge.h" /* startup config + engine access */
 #include "nvs_flash.h"
@@ -11,48 +12,17 @@ static const char *TAG = "voice_cfg";
 /* 默认人设/系统提示词，与 convai_bridge_defaults.c 的 DEFAULT_STARTUP_CONFIG 保持一致 */
 #define DEFAULT_SYSTEM_MESSAGE "你的名字叫小荷，你可以帮小朋友解决小烦恼哦。"
 
-/* ===================================================================
- *  音色表：name 和 voice_type 下标一一对应
- * =================================================================== */
-static const voice_entry_t s_voices[VOICE_COUNT] = {
-    { "温柔少女", "Chinese (Mandarin)_Warm_Girl",
-      "温柔自然 适合助手播报", "温柔 自然", "F01" },
-    { "害羞女孩", "Chinese (Mandarin)_BashfulGirl",
-      "甜美清新 听感舒适", "甜美 清新", "F02" },
-    { "热心女孩", "Chinese (Mandarin)_Warm_HeartedGirl",
-      "亲和力强 适合陪伴", "亲和 暖心", "F03" },
-    { "花甲奶奶", "Chinese (Mandarin)_Kind-hearted_Elder",
-      "沉稳厚重 值得信赖", "沉稳 厚重", "F04" },
-    { "温润男声", "Chinese (Mandarin)_Gentleman",
-      "清晰明亮 适合日常交流", "清晰 明亮", "M01" },
-    { "搞笑大爷", "Chinese (Mandarin)_Humorous_Elder",
-      "风趣幽默 轻松活泼", "风趣 幽默", "M02" },
-    { "嘴硬竹马", "Chinese (Mandarin)_Stubborn_Friend",
-      "个性鲜明 充满活力", "个性 活力", "M03" },
-    { "邻家弟弟", "Chinese (Mandarin)_Pure-hearted_Boy",
-      "纯净真诚 清朗自然", "纯净 真诚", "M04" },
-    { "憨憨萌兽", "Chinese (Mandarin)_Cute_Spirit",
-      "俏皮可爱 灵动有趣", "俏皮 灵动", "M05" },
-    { "机械战甲", "Robot_Armor",
-      "科技感强 机械质感", "科技 机械", "R01" },
-};
+/* 激活表 (voice_tables.h): 表指针 + 数量 + gender 映射 */
+#define s_voices            g_active_voice_table
+#define s_gender_voices     g_active_gender_voices
+#define VOICE_COUNT         ACTIVE_VOICE_COUNT
 
 static int s_voice_id = 0;  /* 当前音色索引 */
 
-/* ===================================================================
- *  Gender → voice_id 映射表
- *  第0维=VOICE_GENDER_FEMALE, 第1维=VOICE_GENDER_MALE, 第2维=VOICE_GENDER_ROBOT
- * =================================================================== */
-static const int s_gender_voices[VOICE_GENDER_COUNT][6] = {
-    { 0, 1, 2, 3, -1, -1 },    /* female: 温柔少女/害羞女孩/热心女孩/花甲奶奶 */
-    { 4, 5, 6, 7, 8, 9 },      /* male:   温润男声/搞笑大爷/嘴硬竹马/邻家弟弟/憨憨萌兽/机械战甲 */
-    { -1, -1, -1, -1, -1, -1 }, /* robot:  (merged into male) */
-};
-
+/* 性别名: 仅 F/M 两档 */
 static const char *s_gender_names[VOICE_GENDER_COUNT] = {
     "女声",
     "男声",
-    "机器",
 };
 
 const voice_entry_t *voice_config_get_list(void) {

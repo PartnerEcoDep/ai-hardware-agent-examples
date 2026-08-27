@@ -7,7 +7,8 @@
 extern "C" {
 #endif
 
-#define VOICE_COUNT    10
+/* 当前主音色表 = IFLYTEK 讯飞 (数量由 voice_tables.h 自动推导)
+ * VOICE_NAME_LEN/VOICE_TYPE_LEN 仍是条目字段的缓冲上限 */
 #define VOICE_NAME_LEN 32
 #define VOICE_TYPE_LEN 64
 
@@ -24,7 +25,6 @@ typedef struct {
 typedef enum {
   VOICE_GENDER_FEMALE = 0,
   VOICE_GENDER_MALE,
-  VOICE_GENDER_ROBOT,
   VOICE_GENDER_COUNT
 } voice_gender_t;
 

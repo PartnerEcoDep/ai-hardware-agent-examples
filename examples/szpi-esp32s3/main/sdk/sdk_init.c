@@ -15,6 +15,7 @@
 
 #include "convai_bridge.h"
 #include "convai_platform_esp32.h"
+#include "convai_platform_esp32_internal.h"
 
 #include "esp_log.h"
 
@@ -30,6 +31,15 @@ esp_err_t sdk_init(void) {
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "platform init failed: %s", esp_err_to_name(err));
     return err;
+  }
+
+  // 唯一设备 ID 注入: eFuse MAC
+  {
+    char dev_id[32] = {0};
+    if (esp32_device_id(dev_id, sizeof(dev_id)) > 0) {
+      convai_bridge_set_device_name(dev_id);
+      ESP_LOGI(TAG, "device name: %s", dev_id);
+    }
   }
 
   convai_bridge_init();

@@ -270,7 +270,7 @@ static const char *TAG = "voice_sel";
 #define GENDER_IDX_FEMALE   0
 #define GENDER_IDX_MALE     1
 
-static const char *const kGenderIcons[VOICE_GENDER_COUNT] = {"F", "M", "R"};
+static const char *const kGenderIcons[VOICE_GENDER_COUNT] = {"F", "M"};
 
 static lv_obj_t *create_flat_button(lv_obj_t *parent, int w, int h, int x,
                                     int y, lv_color_t bg, lv_opa_t bg_opa,
