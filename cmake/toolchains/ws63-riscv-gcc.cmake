@@ -61,13 +61,6 @@ set(CMAKE_C_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
 set(CMAKE_CXX_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
     "WS63 C++ compiler launcher")
 
-# Use compiler launchers to ensure toolchain bin directory is in PATH during
-# build, so cc1.exe can find libssp-0.dll and other runtime DLLs.
-set(_WS63_LAUNCHER "${CMAKE_CURRENT_LIST_DIR}/ws63-compiler-launcher.bat")
-set(CMAKE_C_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
-    "WS63 C compiler launcher")
-set(CMAKE_CXX_COMPILER_LAUNCHER "${_WS63_LAUNCHER}" CACHE FILEPATH
-    "WS63 C++ compiler launcher")
 set(CMAKE_AR "${_WS63_TOOL_PREFIX}-ar.exe" CACHE FILEPATH
     "WS63 archiver")
 set(CMAKE_RANLIB "${_WS63_TOOL_PREFIX}-ranlib.exe" CACHE FILEPATH
