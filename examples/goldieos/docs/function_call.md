@@ -318,11 +318,8 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
     else if (strcmp(emotion, "sad")     == 0) new_emotion = EMOTION_SAD;
     else if (strcmp(emotion, "doubt")   == 0) new_emotion = EMOTION_DOUBT;
     else {
-        /* 不支持的 emotion 返回 error，让后端知道端侧不支持（不静默落 neutral） */
-        snprintf(output_buf, buf_size,
-                 "{\"result\":\"error\",\"message\":\"unsupported emotion: %s\"}", emotion);
-        *output_str = output_buf;
-        return true;   /* 同上：已处理，error 回复 */
+        /* 不支持的表情值: 静默兜底到 neutral, 回复默认成功 */
+        new_emotion = EMOTION_NEUTRAL;
     }
     talk_page_set_emotion(new_emotion);   /* 动画线程下帧应用 */
     return true;
@@ -330,8 +327,7 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
 ```
 
 **设计要点**：
-- handler 只做"参数解析 + 状态设置"，UI 渲染由 talk_page 动画线程异步完成（解耦：functioncall 处理在 bridge 线程，UI 在动画线程）。
-- 返回值恒为 `true`（set_face 总被识别）。参数缺失 / 不支持的 emotion 走 error 回复，让后端感知端侧能力——`result` 字段表达成败，返回值只表达"是否识别此函数"。
+- 返回值恒为 `true`（set_face 总被识别）。参数缺失走 error 回复；不支持的表情值静默兜底到 `neutral` 并回复默认成功——`result` 字段表达成败，返回值只表达"是否识别此函数"。
 - 支持的 5 种表情：`neutral` / `happy` / `angry` / `sad` / `doubt`。
 
 ---
@@ -381,7 +377,7 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
 
 | name | 功能 | 参数 | 实现位置 |
 |------|------|------|------|
-| `set_face` | 切换表情页表情 | `{"face_expression":"happy"}` （neutral/happy/angry/sad/doubt，不支持返回 error） | `convai_func_handlers.c` → `talk_page_set_emotion()` |
+| `set_face` | 切换表情页表情 | `{"face_expression":"happy"}` （neutral/happy/angry/sad/doubt，不支持兜底 neutral 并回复成功） | `convai_func_handlers.c` → `talk_page_set_emotion()` |
 | `set_alarm` | 设置闹钟 | `{"time":"16:00","label":"开会","repeat":"weekdays"}` | `convai_func_handlers.c` → AlarmService |
 | `get_weather` | 查询天气 | `{"location":"深圳"}` | `convai_func_handlers.c`（占位实现，无 HTTP 能力） |
 
