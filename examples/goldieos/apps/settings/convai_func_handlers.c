@@ -24,8 +24,9 @@
 
 /* handle_emotion: set the talk-page avatar emotion from a face_expression
  * string. Always returns true (handled) — set_face is always recognized and a
- * reply is sent either way. Unsupported/missing face_expression yields an
- * error reply so the backend knows the device can't act on it. */
+ * reply is sent either way. Missing face_expression yields an error reply.
+ * Unsupported emotion values silently fall back to neutral with the default
+ * success reply (device capability is not surfaced to the backend). */
 static bool handle_emotion(const char *call_id, cJSON *args_json,
                            char *output_buf, size_t buf_size,
                            const char **output_str)
@@ -48,10 +49,9 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
     else if (strcmp(emotion, "sad") == 0)     new_emotion = EMOTION_SAD;
     else if (strcmp(emotion, "doubt") == 0)   new_emotion = EMOTION_DOUBT;
     else {
-        snprintf(output_buf, buf_size,
-                 "{\"result\":\"error\",\"message\":\"unsupported emotion: %s\"}", emotion);
-        *output_str = output_buf;
-        return true;
+        /* 不支持的表情值: 静默兜底到 neutral, 回复默认成功(不暴露端侧能力) */
+        printf("[AI Settings] EMOTION: unsupported '%s', falling back to neutral\n", emotion);
+        new_emotion = EMOTION_NEUTRAL;
     }
     talk_page_set_emotion(new_emotion);
     return true;
