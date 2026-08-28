@@ -63,15 +63,18 @@ static volatile int          s_capture_running = 0;
 /* Downlink playback ring buffer. The SDK audio callback only enqueues decoded
  * PCM here; a dedicated high-priority task drains it to the codec, smoothing
  * network/decoding jitter and keeping the I2S driver fed at its own pace.
- * 8k stereo = 32KB/s, 512KB ≈ 16s — high headroom for bursty downlink.
- * ponytail: fixed at 512KB, bump to 1MB if a single burst ever exceeds it. */
-#define PLAYBACK_RING_SIZE (512 * 1024)
+ * 8k stereo = 32KB/s, 1MB ≈ 32s — high headroom for bursty downlink.
+ * ponytail: fixed at 1MB, bump further only if a single burst ever exceeds it. */
+#define PLAYBACK_RING_SIZE (1024 * 1024)
 #define PLAYBACK_READ_CHUNK 4096
 #define PLAYBACK_POLL_MS 10
-/* 开播前先攒够这么多 PCM 再出声. 8k stereo = 32000B/s, 1.5s = 48KB.
- * ring 512KB = 16s, 预缓冲只吸收开头短抖动. 短回答由 s_playback_force
- * 兜底(回答结束时强播). */
-#define PLAYBACK_PREBUFFER (48 * 1024)
+/* 开播预缓冲: 8k stereo = 32000B/s.
+ * 回答开始时用 FAST(500ms) 快速开声; 若服务器前端慢批(~1.2-1.4s 间隔)把 ring
+ * 播空, 自动升级到 FULL(1.5s) 重新攒再续播, 长回答前端不再一路卡顿.
+ * ring 1MB = 32s, 预缓冲只吸收开头短抖动. 短回答由 s_playback_force 兜底. */
+#define PLAYBACK_PREBUFFER_FAST (16 * 1024)   /* 500ms */
+#define PLAYBACK_PREBUFFER_FULL (48 * 1024)   /* 1.5s */
+static volatile int s_playback_full_prebuffer = 0; /* 本轮回答是否已升级到 FULL */
 static RingbufHandle_t s_playback_rb = NULL;
 static TaskHandle_t s_playback_task = NULL;
 static volatile unsigned int s_playback_dropped = 0;
@@ -82,15 +85,14 @@ static volatile int s_playback_force = 0;
 
 static void audio_playback_task(void *arg) {
   (void)arg;
-  /* 诊断: 消费侧节奏. 每次 drain 轮打印 ring 已用字节(可用=512KB-已用),
-   * 用于判断消费是否跟得上到达: 持续接近满 = 消费慢/到达快,
-   * 持续撮近空 = 到达慢/消费快 (欠货). 300 轮一次避免刷屏. */
+  /* 诊断: ring 已用字节, 判断消费是否跟得上到达 (300 轮打一次). */
   unsigned drain_log_cnt = 0;
   while (1) {
-    /* 预热: 数据不足 PLAYBACK_PREBUFFER 时只攒不播 (flush/force 时放行) */
+    int prebuffer = s_playback_full_prebuffer ? PLAYBACK_PREBUFFER_FULL
+                                              : PLAYBACK_PREBUFFER_FAST;
     if (!s_playback_flush && !s_playback_force && s_playback_rb != NULL &&
         xRingbufferGetCurFreeSize(s_playback_rb) >
-            (PLAYBACK_RING_SIZE - PLAYBACK_PREBUFFER)) {
+            (PLAYBACK_RING_SIZE - prebuffer)) {
       vTaskDelay(pdMS_TO_TICKS(PLAYBACK_POLL_MS));
       continue;
     }
@@ -104,7 +106,7 @@ static void audio_playback_task(void *arg) {
       void *item = xRingbufferReceiveUpTo(s_playback_rb, &item_size, 0,
                                           PLAYBACK_READ_CHUNK);
       if (item == NULL) {
-        break; /* ring drained */
+        break;
       }
       if (s_playback_flush) {
         vRingbufferReturnItem(s_playback_rb, item);
@@ -126,6 +128,13 @@ static void audio_playback_task(void *arg) {
     if (s_playback_force &&
         xRingbufferGetCurFreeSize(s_playback_rb) == PLAYBACK_RING_SIZE) {
       s_playback_force = 0;
+    }
+    /* 前端慢批把 ring 播空: 升级到 FULL 预缓冲重新攒, 之后平滑.
+     * 只在"本轮真播过数据且播到空"时升级; 预热阶段空 ring 不算欠货. */
+    if (!s_playback_flush && !s_playback_force && g_started &&
+        drained_bytes > 0 &&
+        xRingbufferGetCurFreeSize(s_playback_rb) == PLAYBACK_RING_SIZE) {
+      s_playback_full_prebuffer = 1;
     }
     if (++drain_log_cnt % 300 == 0) {
       size_t used = PLAYBACK_RING_SIZE -
@@ -180,11 +189,18 @@ static void on_sdk_event(convai_engine_t engine, convai_event_t *event,
 
   switch (event->code) {
     case CONVAI_EV_DISCONNECTED:
-      /* SDK gone — stop the bridge (mirror goldieos: bridge_cleanup
-       * halts audio threads and resets local state). */
-      convai_bridge_stop();
+      // 只做本地状态复位
+      g_started = 0;
+      g_status = CONVAI_STATUS_IDLE;
+      if(g_status_cb) g_status_cb(g_status);
+      ESP_LOGI(TAG, "DISCONNECTED: local state reset (sent=%u dropped=%u)",
+                (unsigned)s_frames_sent, (unsigned)s_frames_dropped);
+
       break;
     case CONVAI_EV_FAILED:
+        g_started = 0;
+        g_status = CONVAI_STATUS_IDLE;
+        if(g_status_cb) g_status_cb(g_status);
     case CONVAI_EV_CONNECTED:
     case CONVAI_EV_UPDATED:
     default:
@@ -236,6 +252,7 @@ static void on_status(convai_engine_t engine, convai_status_e status,
       break;
     case CONVAI_STATUS_ANSWERING:
       s_playback_force = 0;   /* 新回答重新走预缓冲门槛 */
+      s_playback_full_prebuffer = 0;  /* 每轮回答都从 FAST 快速开声开始 */
       board_led_set(0);
       ai_chat_ui_set_state(STATE_SPEAKING);
       break;
@@ -258,16 +275,12 @@ static void on_status(convai_engine_t engine, convai_status_e status,
 /* 下行 PCM 缓冲 (对齐 goldieos g_pcm_decode_buf): 单声道 16-bit PCM,
  * 足够容纳 SDK 单帧 G711A 解码结果。G711A 每字节 → 2 字节 PCM。 */
 #define DOWNLINK_PCM_MAX  4096
-/* 单声道 → 立体声扩展后的缓冲 (8k, ×2) */
-#define DOWNLINK_ST_MAX   (DOWNLINK_PCM_MAX * 2)
+#define DOWNLINK_ST_MAX   (DOWNLINK_PCM_MAX * 2)   /* 8k stereo */
 
 static void on_audio(convai_engine_t engine, const void *data, size_t len,
                      const convai_audio_frame_info_t *info, void *user_data) {
   (void)engine; (void)info; (void)user_data;
-  /* 诊断: 周期打印下行数据到达情况 (每 20 帧) + 到达节奏.
-   * 20 帧 = 600ms 音频, 若批次间隔 ≈600ms 即 1x 匀速到达;
-   * 间隔明显 >600ms = 服务器/微服务下发慢 (欠货),
-   * 明显 <600ms = 服务器突发倒灌. 据此区分"没收到"与"消费快". */
+  /* 诊断: 每 20 帧打一次到达间隔; >600ms=服务器下发慢, <600ms=突发倒灌. */
   static unsigned dl_cnt = 0;
   static int64_t dl_last_us = 0;
   if ((++dl_cnt % 20) == 0) {
@@ -285,9 +298,7 @@ static void on_audio(convai_engine_t engine, const void *data, size_t len,
     return;
   }
 
-  /* ---- 下行: G.711A → 8k mono PCM → 立体声(8k) → 播放 ----
-   * SDK 下发 G.711A → convai_g711a_decode 还原 8k 单声道 16-bit PCM,
-   * 直接扩展为立体声(L=R) 写入 8k TX. 与硬件采样率 1:1 对齐, 无需重采样. */
+  /* 下行: G.711A → 8k mono → 立体声(L=R) → ring, 与硬件 1:1 无需重采样. */
   static uint8_t mono[DOWNLINK_PCM_MAX];
   static uint8_t st[DOWNLINK_ST_MAX];   /* 8k stereo */
   size_t mono_len = 0;
@@ -397,8 +408,7 @@ static uint8_t compute_audio_level(const uint8_t *g711a, size_t n) {
 
 /* 单次采集缓冲: 20ms @ 8kHz TDM 4 时隙 16-bit PCM。
  * 每帧 4 样本 (slot0=MIC1, slot1=MIC3 回采, slot2=MIC2, slot3=MIC4) × 2 字节。
- * 用 4 slot 保证 MCLK_256 整数分频 (256/64=4), 时钟正常 RX 才有数据。
- * = AUDIO_SAMPLE_RATE * 4 * 2 / 50 (按字节计)。 */
+ * 用 4 slot 保证 MCLK_256 整数分频 (256/64=4), 时钟正常 RX 才有数据。 */
 #define CAPTURE_BUF_SIZE (AUDIO_SAMPLE_RATE * 4 * 2 / 50)
 
 static void audio_capture_task(void *arg) {
@@ -438,7 +448,7 @@ static void audio_capture_task(void *arg) {
   }
 
   int hb_cnt = 0;
-  int rx_empty_cnt = 0;   /* 连续 received<=0 计数 (诊断) */
+  int rx_empty_cnt = 0;
   int rx_ok_logged = 0;
   while (g_started && g_engine != NULL) {
     int received = codec->read(codec, buf, CAPTURE_BUF_SIZE);
