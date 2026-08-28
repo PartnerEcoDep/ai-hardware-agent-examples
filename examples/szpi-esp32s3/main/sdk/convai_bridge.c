@@ -22,9 +22,9 @@
 #include "convai_bridge_defaults.h"
 #include "convai_codec_g711a.h"
 #include "convai_config_file.h"
-#include "convai_resample.h"
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -62,44 +62,78 @@ static volatile int          s_capture_running = 0;
 
 /* Downlink playback ring buffer. The SDK audio callback only enqueues decoded
  * PCM here; a dedicated high-priority task drains it to the codec, smoothing
- * network/decoding jitter and keeping the I2S driver fed at its own pace. */
-#define PLAYBACK_RING_SIZE (128 * 1024)
-#define PLAYBACK_READ_CHUNK 1024
+ * network/decoding jitter and keeping the I2S driver fed at its own pace.
+ * 8k stereo = 32KB/s, 512KB ≈ 16s — high headroom for bursty downlink.
+ * ponytail: fixed at 512KB, bump to 1MB if a single burst ever exceeds it. */
+#define PLAYBACK_RING_SIZE (512 * 1024)
+#define PLAYBACK_READ_CHUNK 4096
 #define PLAYBACK_POLL_MS 10
+/* 开播前先攒够这么多 PCM 再出声. 8k stereo = 32000B/s, 1.5s = 48KB.
+ * ring 512KB = 16s, 预缓冲只吸收开头短抖动. 短回答由 s_playback_force
+ * 兜底(回答结束时强播). */
+#define PLAYBACK_PREBUFFER (48 * 1024)
 static RingbufHandle_t s_playback_rb = NULL;
 static TaskHandle_t s_playback_task = NULL;
 static volatile unsigned int s_playback_dropped = 0;
 static volatile int s_playback_flush = 0;
+/* ANSWER_FINISHED 置位: 本轮音频已全部入 ring, 强制开播(跳过预缓冲),
+ * 否则短回答(<3s)永远攒不够阈值, 音频滞留 ring 拖到下一句一起播. */
+static volatile int s_playback_force = 0;
 
 static void audio_playback_task(void *arg) {
   (void)arg;
+  /* 诊断: 消费侧节奏. 每次 drain 轮打印 ring 已用字节(可用=512KB-已用),
+   * 用于判断消费是否跟得上到达: 持续接近满 = 消费慢/到达快,
+   * 持续撮近空 = 到达慢/消费快 (欠货). 300 轮一次避免刷屏. */
+  unsigned drain_log_cnt = 0;
   while (1) {
-    size_t item_size = 0;
-    void *item = xRingbufferReceiveUpTo(s_playback_rb, &item_size,
-                                        pdMS_TO_TICKS(PLAYBACK_POLL_MS),
-                                        PLAYBACK_READ_CHUNK);
-
-    if (s_playback_flush) {
-      if (item != NULL) {
+    /* 预热: 数据不足 PLAYBACK_PREBUFFER 时只攒不播 (flush/force 时放行) */
+    if (!s_playback_flush && !s_playback_force && s_playback_rb != NULL &&
+        xRingbufferGetCurFreeSize(s_playback_rb) >
+            (PLAYBACK_RING_SIZE - PLAYBACK_PREBUFFER)) {
+      vTaskDelay(pdMS_TO_TICKS(PLAYBACK_POLL_MS));
+      continue;
+    }
+    /* Drain the ring in a loop, not one 1KB chunk per 10ms poll: a downlink
+     * burst (~5x real-time) used to fill the ring faster than this task
+     * drained it → ring full → tail audio dropped (see goldieos
+     * convai_audio_downlink.c "Draining in a loop keeps the ring low"). */
+    size_t drained_bytes = 0;
+    for (;;) {
+      size_t item_size = 0;
+      void *item = xRingbufferReceiveUpTo(s_playback_rb, &item_size, 0,
+                                          PLAYBACK_READ_CHUNK);
+      if (item == NULL) {
+        break; /* ring drained */
+      }
+      if (s_playback_flush) {
         vRingbufferReturnItem(s_playback_rb, item);
         continue;
       }
-      s_playback_flush = 0;
-      continue;
-    }
-
-    if (item == NULL) {
-      continue;
-    }
-
-    if (g_started && g_engine != NULL) {
-      audio_codec_t *codec = audio_codec_active();
-      if (codec != NULL && codec->write != NULL) {
-        codec->write(codec, item, (int)item_size);
+      if (g_started && g_engine != NULL) {
+        audio_codec_t *codec = audio_codec_active();
+        if (codec != NULL && codec->write != NULL) {
+          codec->write(codec, item, (int)item_size);
+          drained_bytes += item_size;
+        }
       }
+      vRingbufferReturnItem(s_playback_rb, item);
     }
-
-    vRingbufferReturnItem(s_playback_rb, item);
+    if (s_playback_flush) {
+      s_playback_flush = 0;
+    }
+    /* 强播已排空: 复位, 下一轮重新走预缓冲门槛 */
+    if (s_playback_force &&
+        xRingbufferGetCurFreeSize(s_playback_rb) == PLAYBACK_RING_SIZE) {
+      s_playback_force = 0;
+    }
+    if (++drain_log_cnt % 300 == 0) {
+      size_t used = PLAYBACK_RING_SIZE -
+                    xRingbufferGetCurFreeSize(s_playback_rb);
+      ESP_LOGI(TAG, "playback: ring_used=%u drained_this_round=%u",
+               (unsigned)used, (unsigned)drained_bytes);
+    }
+    vTaskDelay(pdMS_TO_TICKS(PLAYBACK_POLL_MS));
   }
 }
 
@@ -187,6 +221,7 @@ static void on_status(convai_engine_t engine, convai_status_e status,
         ESP_LOGI(TAG, "uplink: sent=%u dropped=%u drop_rate=%u%%",
                  sent, dropped, dropped * 100 / (sent + dropped));
       }
+      s_playback_force = 1;   /* 本轮音频已收齐, 强制开播 */
       ai_chat_ui_set_state(STATE_IDLE);
       board_led_set(0);
       break;
@@ -200,6 +235,7 @@ static void on_status(convai_engine_t engine, convai_status_e status,
       ai_chat_ui_set_state(STATE_THINKING);
       break;
     case CONVAI_STATUS_ANSWERING:
+      s_playback_force = 0;   /* 新回答重新走预缓冲门槛 */
       board_led_set(0);
       ai_chat_ui_set_state(STATE_SPEAKING);
       break;
@@ -222,19 +258,25 @@ static void on_status(convai_engine_t engine, convai_status_e status,
 /* 下行 PCM 缓冲 (对齐 goldieos g_pcm_decode_buf): 单声道 16-bit PCM,
  * 足够容纳 SDK 单帧 G711A 解码结果。G711A 每字节 → 2 字节 PCM。 */
 #define DOWNLINK_PCM_MAX  4096
-/* 升采样到 24k 后的单声道 PCM (×3) */
-#define DOWNLINK_MONO24_MAX (DOWNLINK_PCM_MAX * 3)
-/* 单声道 → 立体声扩展后的缓冲 (×2) */
-#define DOWNLINK_ST_MAX   (DOWNLINK_MONO24_MAX * 2)
+/* 单声道 → 立体声扩展后的缓冲 (8k, ×2) */
+#define DOWNLINK_ST_MAX   (DOWNLINK_PCM_MAX * 2)
 
 static void on_audio(convai_engine_t engine, const void *data, size_t len,
                      const convai_audio_frame_info_t *info, void *user_data) {
   (void)engine; (void)info; (void)user_data;
-  /* 诊断: 周期打印下行数据到达情况 (每 20 帧) */
+  /* 诊断: 周期打印下行数据到达情况 (每 20 帧) + 到达节奏.
+   * 20 帧 = 600ms 音频, 若批次间隔 ≈600ms 即 1x 匀速到达;
+   * 间隔明显 >600ms = 服务器/微服务下发慢 (欠货),
+   * 明显 <600ms = 服务器突发倒灌. 据此区分"没收到"与"消费快". */
   static unsigned dl_cnt = 0;
+  static int64_t dl_last_us = 0;
   if ((++dl_cnt % 20) == 0) {
-    ESP_LOGI(TAG, "downlink on_audio: len=%u data_type=%d", (unsigned)len,
-             info ? (int)info->data_type : -1);
+    int64_t now_us = esp_timer_get_time();
+    int64_t gap_ms = (dl_last_us > 0) ? (now_us - dl_last_us) / 1000 : 0;
+    dl_last_us = now_us;
+    ESP_LOGI(TAG, "downlink on_audio: len=%u data_type=%d batch_gap_ms=%lld",
+             (unsigned)len, info ? (int)info->data_type : -1,
+             (long long)gap_ms);
   }
 
   audio_codec_t *codec = audio_codec_active();
@@ -243,14 +285,11 @@ static void on_audio(convai_engine_t engine, const void *data, size_t len,
     return;
   }
 
-  /* ---- 下行对齐 goldieos bridge_downlink_on_audio + 8k 重采样 ----
-   * SDK 下发 G.711A → convai_g711a_decode 还原 8k 单声道 16-bit PCM
-   * (pcm_len = enc_len*2, goldieos 同为 8k)。
-   * 本板硬件 TX 是 24kHz 立体声, 故: 8k → 24k 升采样(1:3) →
-   * 单声道扩展为立体声(L=R) → 写入播放。 */
+  /* ---- 下行: G.711A → 8k mono PCM → 立体声(8k) → 播放 ----
+   * SDK 下发 G.711A → convai_g711a_decode 还原 8k 单声道 16-bit PCM,
+   * 直接扩展为立体声(L=R) 写入 8k TX. 与硬件采样率 1:1 对齐, 无需重采样. */
   static uint8_t mono[DOWNLINK_PCM_MAX];
-  static uint8_t mono24[DOWNLINK_MONO24_MAX];
-  static uint8_t st[DOWNLINK_ST_MAX];
+  static uint8_t st[DOWNLINK_ST_MAX];   /* 8k stereo */
   size_t mono_len = 0;
   if (convai_g711a_decode((const uint8_t *)data, len,
                           mono, sizeof(mono), &mono_len) != 0 ||
@@ -260,42 +299,48 @@ static void on_audio(convai_engine_t engine, const void *data, size_t len,
     return;
   }
   size_t n8 = mono_len / sizeof(int16_t);   /* 8k 单声道帧数 */
-  size_t n24 = 0;
-  if (convai_resample_up_3x((const int16_t *)mono, n8,
-                            (int16_t *)mono24,
-                            DOWNLINK_MONO24_MAX / sizeof(int16_t),
-                            &n24) != 0 || n24 == 0) {
-    ESP_LOGW(TAG, "downlink upsampling failed");
-    return;
-  }
-  const int16_t *m24 = (const int16_t *)mono24;
+  const int16_t *m = (const int16_t *)mono;
   int16_t *s          = (int16_t *)st;
-  for (size_t i = 0; i < n24; i++) {
-    s[i * 2]     = m24[i];   /* L */
-    s[i * 2 + 1] = m24[i];   /* R = L (单声道→立体声) */
+  for (size_t i = 0; i < n8; i++) {
+    s[i * 2]     = m[i];   /* L */
+    s[i * 2 + 1] = m[i];   /* R = L (单声道→立体声) */
   }
-  size_t pcm_bytes = n24 * 2 * sizeof(int16_t);
+  size_t pcm_bytes = n8 * 2 * sizeof(int16_t);   /* 8k stereo 字节数 */
   if (s_playback_flush) {
     s_playback_dropped += pcm_bytes;
     return;
   }
   if (s_playback_rb != NULL && s_playback_task != NULL) {
     if (xRingbufferSend(s_playback_rb, st, pcm_bytes, 0) != pdTRUE) {
-      s_playback_dropped += pcm_bytes;
-      if ((dl_cnt % 20) == 0) {
-        ESP_LOGW(TAG, "playback ring full, dropped=%u",
-                 (unsigned)s_playback_dropped);
+      /* ring 满: 等播放任务排空再写入, 不丢帧。文本结束后服务器会把
+       * 积压 TTS 音频以数倍速率倒灌, 阻塞写入让 TCP 背压把它压回
+       * 1x 实时, 长回答尾部不再被丢弃。2s 兜底防播放任务异常挂死。 */
+      TickType_t waited = 0;
+      while (!s_playback_flush && g_started &&
+             xRingbufferSend(s_playback_rb, st, pcm_bytes,
+                             pdMS_TO_TICKS(20)) != pdTRUE) {
+        waited += 20;
+        if (waited > 2000) {
+          break;
+        }
+      }
+      if (s_playback_flush || waited > 2000) {
+        s_playback_dropped += pcm_bytes;
+        if ((dl_cnt % 20) == 0) {
+          ESP_LOGW(TAG, "playback ring full, dropped=%u",
+                   (unsigned)s_playback_dropped);
+        }
       }
     }
   } else {
     int w = codec->write(codec, st, (int)pcm_bytes);
     if (w < 0) {
-      ESP_LOGW(TAG, "downlink write failed (n24=%u)", (unsigned)n24);
+      ESP_LOGW(TAG, "downlink write failed (n8=%u)", (unsigned)n8);
     }
   }
   if ((dl_cnt % 20) == 0) {
-    ESP_LOGI(TAG, "downlink write: n8=%u n24=%u dropped=%u", (unsigned)n8,
-             (unsigned)n24, (unsigned)s_playback_dropped);
+    ESP_LOGI(TAG, "downlink write: n8=%u dropped=%u", (unsigned)n8,
+             (unsigned)s_playback_dropped);
   }
 }
 
@@ -350,7 +395,7 @@ static uint8_t compute_audio_level(const uint8_t *g711a, size_t n) {
   return smooth;
 }
 
-/* 单次采集缓冲: 20ms @ 24kHz TDM 4 时隙 16-bit PCM。
+/* 单次采集缓冲: 20ms @ 8kHz TDM 4 时隙 16-bit PCM。
  * 每帧 4 样本 (slot0=MIC1, slot1=MIC3 回采, slot2=MIC2, slot3=MIC4) × 2 字节。
  * 用 4 slot 保证 MCLK_256 整数分频 (256/64=4), 时钟正常 RX 才有数据。
  * = AUDIO_SAMPLE_RATE * 4 * 2 / 50 (按字节计)。 */
@@ -372,7 +417,8 @@ static void audio_capture_task(void *arg) {
     return;
   }
   /* planar PCM 缓冲 (L 前 R 后): 只保留 slot0(MIC1)+slot1(MIC3) 两路,
-   * 大小 = 2 通道 24k = AUDIO_SAMPLE_RATE*2*2/50 字节。 */
+   * 8k 硬件采集即 8k, 无需再降采样。
+   * 大小 = 2 通道 8k = AUDIO_SAMPLE_RATE*2*2/50 字节。 */
   size_t planar_cap = (size_t)(AUDIO_SAMPLE_RATE * 2 * 2 / 50);
   uint8_t *planar_buf = (uint8_t *)malloc(planar_cap);
   if (planar_buf == NULL) {
@@ -381,20 +427,9 @@ static void audio_capture_task(void *arg) {
     vTaskDeleteWithCaps(NULL);
     return;
   }
-  /* 降采样到 8k 后的双声道 planar 缓冲: 24k 帧数 / 3, 大小 ≈ planar_cap/3。 */
-  size_t planar8_cap = (size_t)(AUDIO_SAMPLE_RATE * 2 * 2 / 50 / 3);
-  uint8_t *planar8_buf = (uint8_t *)malloc(planar8_cap);
-  if (planar8_buf == NULL) {
-    free(planar_buf);
-    free(buf);
-    s_capture_running = 0;
-    vTaskDeleteWithCaps(NULL);
-    return;
-  }
-  /* G.711A 编码输出缓冲: 2 通道 8k 压缩后, planar8_cap 足够。 */
-  uint8_t *g711_buf = (uint8_t *)malloc(planar8_cap);
+  /* G.711A 编码输出缓冲: 2 通道 8k 压缩后 ≤ planar_cap。 */
+  uint8_t *g711_buf = (uint8_t *)malloc(planar_cap);
   if (g711_buf == NULL) {
-    free(planar8_buf);
     free(planar_buf);
     free(buf);
     s_capture_running = 0;
@@ -415,7 +450,7 @@ static void audio_capture_task(void *arg) {
       }
     } else {
       rx_empty_cnt = 0;
-      /* 上行声道对齐 (TDM 4 时隙, ES7210) + 8kHz 重采样:
+      /* 上行声道对齐 (TDM 4 时隙, ES7210), 8k 采集即 8k 直接编码:
        *   (实测播放时 slot1 幅值飙升至 9k+, 确认物理顺序为 MIC1, MIC3, MIC2, MIC4):
        *     slot0 = MIC1  (麦克风/人声)     → 左声道
        *     slot1 = MIC3  (扬声器回采/AEC)  → 右声道
@@ -423,9 +458,9 @@ static void audio_capture_task(void *arg) {
        *     slot3 = MIC4  (未接)            → 丢弃
        *   4-slot 是为了保证 MCLK_256 整数分频 (256/64=4), 让 ES7210 收到
        *   正确的 BCLK/LRCK, RX 才有数据。
-       *   流程: 读 24k TDM → 取 slot0(MIC1)/slot1(MIC3) → planar[L=MIC1][R=MIC3]@24k
-       *         → 降采样到 8k → channels=2 A-law 编码 → L+R 一起上行。 */
-      size_t tdm_frames = (size_t)received / (4 * sizeof(int16_t)); /* TDM 帧数@24k */
+       *   流程: 读 8k TDM → 取 slot0(MIC1)/slot1(MIC3) → planar[L=MIC1][R=MIC3]@8k
+       *         → channels=2 A-law 编码 → L+R 一起上行。 */
+      size_t tdm_frames = (size_t)received / (4 * sizeof(int16_t)); /* TDM 帧数@8k */
       if (tdm_frames > 0) {
         if (!rx_ok_logged) {
           rx_ok_logged = 1;
@@ -439,22 +474,13 @@ static void audio_capture_task(void *arg) {
           planar[tdm_frames + i]  = samples[i * 4 + 1];   /* slot1 = MIC3 回采 (右) */
           /* slot2(MIC2) 与 slot3(MIC4 未接) 丢弃 */
         }
-        /* 降采样 24k → 8k (3:1), 分别对 L(MIC1) 和 R(MIC3) 处理 */
-        size_t l8 = 0, r8 = 0;
-        int dl = convai_resample_down_3x(planar, tdm_frames,
-                                         (int16_t *)planar8_buf,
-                                         planar8_cap / 2, &l8);
-        int dr = convai_resample_down_3x(planar + tdm_frames, tdm_frames,
-                                         (int16_t *)planar8_buf + l8,
-                                         planar8_cap / 2 - l8, &r8);
-        if (dl != 0 || dr != 0 || l8 == 0) {
-          s_frames_dropped++;
-        } else {
-          int16_t *planar8 = (int16_t *)planar8_buf;
+        size_t l8 = tdm_frames, r8 = tdm_frames;   /* 8k 硬件, 1:1 */
+        {
+          int16_t *planar8 = planar;
           size_t planar8_len = (l8 + r8) * sizeof(int16_t); /* L8+R8 平面字节数 */
           size_t g711_len = 0;
           int enc = convai_g711a_encode((uint8_t *)planar8, planar8_len, 2,
-                                        g711_buf, planar8_cap,
+                                        g711_buf, planar_cap,
                                         &g711_len);
           if (enc != 0 || g711_len == 0) {
             s_frames_dropped++;
@@ -486,7 +512,6 @@ static void audio_capture_task(void *arg) {
     }
   }
   free(g711_buf);
-  free(planar8_buf);
   free(planar_buf);
   free(buf);
   s_capture_running = 0;
@@ -579,6 +604,8 @@ int convai_bridge_start(void) {
 
   g_started = 1;
   g_status  = CONVAI_STATUS_IDLE;
+  /* New session: reset downlink diagnostics so dropped counts this turn. */
+  s_playback_dropped = 0;
   bridge_start_capture();
   if (g_status_cb) g_status_cb(g_status);
   return CONVAI_OK;

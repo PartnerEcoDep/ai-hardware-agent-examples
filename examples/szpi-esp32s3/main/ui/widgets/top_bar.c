@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file widgets/top_bar.c
  * @brief Status bar at the top of the chat screen (y 0..40).
  *
@@ -69,22 +69,22 @@ void create_top_bar(void) {
   lv_obj_set_style_border_width(ui.status_dot, 0, 0);
 
   ui.status_label = lv_label_create(lv_screen_active());
-  lv_label_set_text(ui.status_label, "Disconnected");
+  lv_label_set_text(ui.status_label, "未连接");
   lv_obj_set_pos(ui.status_label, 30, 11);
   lv_obj_set_style_text_color(ui.status_label, C_TEXT, 0);
-  lv_obj_set_style_text_font(ui.status_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.status_label, &lv_font_custom_cjk_14, 0);
 
   create_volume_control();
 
   /* Top-right: uplink packet loss rate. Bottom-left: RAM usage. */
   ui.loss_label = lv_label_create(lv_screen_active());
-  lv_label_set_text(ui.loss_label, "Loss -");
+  lv_label_set_text(ui.loss_label, "丢包 -");
   lv_obj_set_style_text_color(ui.loss_label, C_TEXT_GRAY, 0);
-  lv_obj_set_style_text_font(ui.loss_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.loss_label, &lv_font_custom_cjk_14, 0);
   lv_obj_align(ui.loss_label, LV_ALIGN_TOP_RIGHT, -8, 6);
   ui.ram_label = lv_label_create(lv_screen_active());
-  lv_label_set_text(ui.ram_label, "Use -");
+  lv_label_set_text(ui.ram_label, "内存 -");
   lv_obj_set_style_text_color(ui.ram_label, C_TEXT_GRAY, 0);
-  lv_obj_set_style_text_font(ui.ram_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.ram_label, &lv_font_custom_cjk_14, 0);
   lv_obj_align(ui.ram_label, LV_ALIGN_BOTTOM_LEFT, 8, -8);
 }

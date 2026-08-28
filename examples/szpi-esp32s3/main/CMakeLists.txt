@@ -54,7 +54,6 @@ idf_component_register(
         "sdk/convai_bridge_defaults.c"
         "sdk/convai_config_file.c"
         "sdk/convai_codec_g711a.c"
-        "sdk/convai_resample.c"
 
         # ---- SDK 平台 HAL (sdk/platform/) ----
         "sdk/platform/convai_platform_esp32.c"

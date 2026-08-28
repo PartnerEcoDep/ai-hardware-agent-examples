@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file ai_chat_ui.c
  * @brief Chat UI orchestrator: model, shared helpers, public API.
  *
@@ -143,17 +143,17 @@ void create_bottom_text(void) {
   ui.state_label = lv_label_create(lv_screen_active());
   lv_obj_set_size(ui.state_label, 320, 20);
   lv_obj_set_pos(ui.state_label, 0, 180);
-  lv_label_set_text(ui.state_label, "Idle");
+  lv_label_set_text(ui.state_label, "待机");
   lv_obj_set_style_text_color(ui.state_label, C_TEXT, 0);
-  lv_obj_set_style_text_font(ui.state_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.state_label, &lv_font_custom_cjk_14, 0);
   lv_obj_set_style_text_align(ui.state_label, LV_TEXT_ALIGN_CENTER, 0);
 
   ui.hint_label = lv_label_create(lv_screen_active());
   lv_obj_set_size(ui.hint_label, 320, 20);
   lv_obj_set_pos(ui.hint_label, 0, 204);
-  lv_label_set_text(ui.hint_label, "Tap to talk");
+  lv_label_set_text(ui.hint_label, "点击说话");
   lv_obj_set_style_text_color(ui.hint_label, C_TEXT_GRAY, 0);
-  lv_obj_set_style_text_font(ui.hint_label, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(ui.hint_label, &lv_font_custom_cjk_14, 0);
   lv_obj_set_style_text_align(ui.hint_label, LV_TEXT_ALIGN_CENTER, 0);
 }
 
@@ -227,16 +227,16 @@ static void ai_chat_ui_update_stats(void) {
     uint32_t total = heap_caps_get_total_size(MALLOC_CAP_8BIT);
     uint32_t free_heap = esp_get_free_heap_size();
     uint32_t used = (total > free_heap) ? (total - free_heap) : 0;
-    lv_label_set_text_fmt(ui.ram_label, "Use %uKB",
+    lv_label_set_text_fmt(ui.ram_label, "内存 %uKB",
                           (unsigned int)(used / 1024));
   }
   if (ui.loss_label != NULL) {
     if (have_stats && (sent + dropped) > 0) {
       unsigned int pct = (unsigned int)((uint64_t)dropped * 100 /
                                         (sent + dropped));
-      lv_label_set_text_fmt(ui.loss_label, "Loss %u%%", pct);
+      lv_label_set_text_fmt(ui.loss_label, "丢包 %u%%", pct);
     } else {
-      lv_label_set_text(ui.loss_label, "Loss -");
+      lv_label_set_text(ui.loss_label, "丢包 -");
     }
   }
 
@@ -295,32 +295,32 @@ void ai_chat_ui_set_state(chat_state_t state) {
   switch (state) {
     case CHAT_IDLE:
       state_color = C_GREEN;
-      state_text = "Idle";
-      hint_text = "Tap to start";
+      state_text = "待机";
+      hint_text = "点击开始";
       break;
     case CHAT_LISTENING:
       state_color = C_BLUE;
-      state_text = "Listening";
-      hint_text = "Please wait";
+      state_text = "聆听中";
+      hint_text = "请说话";
       break;
     case CHAT_SPEAKING:
       state_color = C_PURPLE;
-      state_text = "AI speaking";
-      hint_text = "Playing";
+      state_text = "AI 播报";
+      hint_text = "播放中";
       break;
     case CHAT_THINKING:
       state_color = C_PURPLE;
-      state_text = "Thinking";
-      hint_text = "Generating...";
+      state_text = "思考中";
+      hint_text = "生成中...";
       break;
     case CHAT_DISCONNECTED:
       state_color = C_RED;
-      state_text = "Disconnected";
-      hint_text = "Check network";
+      state_text = "未连接";
+      hint_text = "请检查网络";
       break;
     case CHAT_INTERRUPTED:
       state_color = C_TEXT_GRAY;
-      state_text = "Interrupted";
+      state_text = "已打断";
       hint_text = " ";
       break;
     case CHAT_VOICE_SELECT:
@@ -345,7 +345,7 @@ void ai_chat_ui_set_network(bool online) {
     ESP_LOGE(TAG, "set_network: failed to acquire LVGL lock");
     return;
   }
-  lv_label_set_text(ui.status_label, online ? "Connected" : "Disconnected");
+  lv_label_set_text(ui.status_label, online ? "已连接" : "未连接");
   lv_obj_set_style_bg_color(ui.status_dot, online ? C_GREEN : C_RED, 0);
   lvgl_port_unlock();
 }
@@ -365,6 +365,7 @@ void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info) {
     case CONVAI_EV_DISCONNECTED:
     case CONVAI_EV_FAILED:
       ai_chat_ui_set_cloud(false);
+      ai_chat_ui_set_state(STATE_IDLE);
       break;
     case CONVAI_EV_UPDATED:
     default:
@@ -377,7 +378,7 @@ void ai_chat_ui_set_cloud(bool connected) {
     ESP_LOGE(TAG, "set_cloud: failed to acquire LVGL lock");
     return;
   }
-  lv_label_set_text(ui.status_label, connected ? "Connected" : "Disconnected");
+  lv_label_set_text(ui.status_label, connected ? "已连接" : "未连接");
   lv_obj_set_style_bg_color(ui.status_dot,
                             connected ? C_GREEN : C_TEXT_GRAY, 0);
   lvgl_port_unlock();
