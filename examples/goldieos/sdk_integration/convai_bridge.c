@@ -18,7 +18,6 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 
 /* ---- internal state ---- */
 static convai_engine_t          g_engine    = NULL;
@@ -236,12 +235,11 @@ static void bridge_setup(void)
     /* Initialize the app-layer codec before starting audio pipelines.
      * The codec ID is read from convai.cfg (same "codec" key used by
      * bridge_build_config_json) so the app codec matches what the SDK
-     * negotiated with the server. Defaults to G711A(1).
+     * negotiated with the server. Defaults to G711A(0).
      * This must be called here (not in convai_bridge_init) because
      * bridge_cleanup deinitializes the codec on disconnect, and the
      * codec must be re-initialized on every bridge start. */
-    const char *codec_str = convai_config_file_get("codec");
-    int codec_id = codec_str ? (int)strtol(codec_str, NULL, 10) : 0;  /* 默认 0=G.711A */
+    int codec_id = bridge_get_default_codec_id();
     int codec_ret = app_codec_init((app_codec_id_e)codec_id);
     if (codec_ret != APP_CODEC_OK) {
         printf("[convai_bridge] WARNING: app_codec_init(%d) failed: %d\n",
@@ -344,4 +342,3 @@ int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed();
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }
-

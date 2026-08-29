@@ -12,9 +12,9 @@
 #include "audio_service.h"
 #include "goldie_osal.h"
 #include "ringbuffer.h"
-
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 
 /* ---- Playback thread state ---- */
 enum {
@@ -29,7 +29,7 @@ enum {
  * doesn't underrun on the first burst. ~240ms of 16kHz-mono-16bit PCM. */
 #define PLAYBACK_PREBUFFER   3840
 
-#define AUDIO_DOWNLINK_DUMP_PATH  "audio_downlink_dump.wav"
+#define AUDIO_DOWNLINK_DUMP_PATH         "audio_downlink_dump.wav"
 
 typedef struct {
     int state;          /* current playback state */
@@ -83,11 +83,25 @@ static int playback_thread_func(void *arg)
     AudioService *audio = (AudioService *)hw->audio_service;
 
     const int sr = hw->sample_rate > 0 ? hw->sample_rate : 8000;
+    const int hw_reported_ch = hw->channels > 0 ? hw->channels : -1;
 
-    /* G.711A downlink decodes to mono PCM16 regardless of the stereo capture
-     * format used by the uplink/AEC path. */
+    /*
+     * Playback data is intentionally kept MONO.
+     *
+     * Current DMA thresholds are all designed for:
+     *   8000 Hz / mono / PCM16
+     *
+     * 20 ms  = 320 bytes
+     * 256 ms = 4096 bytes
+     * 384 ms = 6144 bytes
+     */
+    const int playback_ch = 1;
+
     int dump_ret = bridge_dump_open(BRIDGE_AUDIO_DUMP_DOWNLINK,
-                                    AUDIO_DOWNLINK_DUMP_PATH, sr, 1, 16);
+                                    AUDIO_DOWNLINK_DUMP_PATH,
+                                    sr,
+                                    playback_ch,
+                                    16);
     if (dump_ret == 0) {
         printf("[convai_bridge] downlink audio dump file opened: %s\n",
                AUDIO_DOWNLINK_DUMP_PATH);
@@ -96,7 +110,13 @@ static int playback_thread_func(void *arg)
                AUDIO_DOWNLINK_DUMP_PATH);
     }
 
-    printf("[convai_bridge] playback thread started (sr=%d, DMA feedback)\n", sr);
+    printf(
+        "[convai_bridge] playback thread started "
+        "(sr=%d playback_ch=%d hw_reported_ch=%d, DMA feedback)\n",
+        sr,
+        playback_ch,
+        hw_reported_ch
+    );
 
     /* Static read buffer: the playback thread is a single instance (one
      * g_playback_ctrl, joined in bridge_downlink_stop before any restart),
@@ -307,7 +327,27 @@ void bridge_downlink_stop(void)
 void bridge_downlink_on_audio(const void *data, size_t len,
                               const convai_audio_frame_info_t *info)
 {
-    (void)info;
+    static unsigned int s_downlink_diag_count = 0;
+
+    if (s_downlink_diag_count < 24) {
+        const uint8_t *bytes = (const uint8_t *)data;
+        size_t head_len = (bytes != NULL)
+                          ? (len < 8 ? len : 8)
+                          : 0;
+        size_t i;
+
+        printf("[convai_bridge] downlink frame: type=%d len=%u commit=%d head=",
+               info != NULL ? (int)info->data_type : -1,
+               (unsigned int)len,
+               info != NULL ? info->commit : -1);
+
+        for (i = 0; i < head_len; ++i) {
+            printf("%02X", bytes[i]);
+        }
+
+        printf("\n");
+        s_downlink_diag_count++;
+    }
 
     int pcm_samples = 0;
     int dec_ret = app_codec_decode((const uint8_t *)data, (int)len,
@@ -319,7 +359,65 @@ void bridge_downlink_on_audio(const void *data, size_t len,
                dec_ret, pcm_samples);
         return;
     }
+    static unsigned int s_opus_pcm_diag_count = 0;
+
+    if (app_codec_get_id() == APP_CODEC_OPUS &&
+        s_opus_pcm_diag_count < 24) {
+
+        int codec_sr = app_codec_get_sample_rate();
+
+        printf(
+            "[OPUS-DL] packet=%u bytes "
+            "decoded=%d samples sr=%d duration=%dms\n",
+            (unsigned int)len,
+            pcm_samples,
+            codec_sr,
+            codec_sr > 0
+                ? pcm_samples * 1000 / codec_sr
+                : -1
+        );
+
+        s_opus_pcm_diag_count++;
+    }
+    /* Opus decodes to 16kHz mono. Downsample to hw rate if needed. */
+    const audio_hw_info_t *hw = bridge_get_audio_hw();
+    int hw_sr = hw->sample_rate > 0 ? hw->sample_rate : 8000;
+    int hw_reported_ch = hw->channels > 0 ? hw->channels : -1;
+
+    if (app_codec_get_id() == APP_CODEC_OPUS) {
+        int codec_sr = app_codec_get_sample_rate();  /* 16000 for Opus */
+        if (codec_sr > hw_sr && hw_sr > 0) {
+            int16_t *src = (int16_t *)g_pcm_decode_buf;
+            int out_samples = (int)((long)pcm_samples * hw_sr / codec_sr);
+            double ratio = (double)codec_sr / hw_sr;
+            for (int i = 0; i < out_samples; i++) {
+                double src_idx = i * ratio;
+                int idx0 = (int)src_idx;
+                int idx1 = idx0 + 1;
+                if (idx0 >= pcm_samples) idx0 = pcm_samples - 1;
+                if (idx1 >= pcm_samples) idx1 = pcm_samples - 1;
+                double frac = src_idx - idx0;
+                src[i] = (int16_t)(src[idx0] * (1.0 - frac) + src[idx1] * frac);
+            }
+            pcm_samples = out_samples;
+        }
+    }
     size_t pcm_len = (size_t)pcm_samples * 2;
+    static unsigned int s_play_fmt_diag_count = 0;
+
+    if (s_play_fmt_diag_count < 24) {
+        printf(
+            "[PLAY-FMT] sr=%d playback_ch=1 hw_reported_ch=%d "
+            "samples=%d bytes=%u duration=%dms\n",
+            hw_sr,
+            hw_reported_ch,
+            pcm_samples,
+            (unsigned int)pcm_len,
+            hw_sr > 0 ? pcm_samples * 1000 / hw_sr : -1
+        );
+
+        s_play_fmt_diag_count++;
+    }
 
     /* If the playback thread isn't running (e.g. LOS_TaskCreate failed under
      * task-pool pressure), don't dump PCM into a ring nobody is draining — that

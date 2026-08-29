@@ -33,6 +33,7 @@
 #include "app_codec_internal.h"
 
 #ifdef CONFIG_APP_ENABLE_OPUS
+#include "goldie_osal.h"
 #include <opus.h>
 #include <stdio.h>
 
@@ -44,15 +45,28 @@
 
 static OpusEncoder *s_enc = NULL;
 static OpusDecoder *s_dec = NULL;
+static goldie_mutex s_opus_mutex;
+static int s_opus_mutex_initialized = 0;
+static unsigned int s_decode_diag_count = 0;
 
 int app_codec_opus_init(void)
 {
     int err;
 
+    if (!s_opus_mutex_initialized) {
+        goldie_mutex_init(&s_opus_mutex);
+        s_opus_mutex_initialized = 1;
+    }
+
+    goldie_mutex_lock(&s_opus_mutex);
+
     if (s_enc == NULL) {
         s_enc = opus_encoder_create(OPUS_SAMPLE_RATE, 1 /* mono */,
-                                    OPUS_APPLICATION_VOIP, &err);
-        if (err != OPUS_OK || s_enc == NULL) return APP_CODEC_ERR_ENCODE;
+                                    OPUS_APPLICATION_RESTRICTED_CELT, &err);
+        if (err != OPUS_OK || s_enc == NULL) {
+            goldie_mutex_unlock(&s_opus_mutex);
+            return APP_CODEC_ERR_ENCODE;
+        }
         opus_encoder_ctl(s_enc, OPUS_SET_BITRATE(OPUS_BITRATE));
         opus_encoder_ctl(s_enc, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
     }
@@ -62,24 +76,40 @@ int app_codec_opus_init(void)
         if (err != OPUS_OK || s_dec == NULL) {
             opus_encoder_destroy(s_enc);
             s_enc = NULL;
+            goldie_mutex_unlock(&s_opus_mutex);
             return APP_CODEC_ERR_DECODE;
         }
     }
 
+    goldie_mutex_unlock(&s_opus_mutex);
     return APP_CODEC_OK;
 }
 
 void app_codec_opus_deinit(void)
 {
+    if (!s_opus_mutex_initialized) return;
+
+    goldie_mutex_lock(&s_opus_mutex);
     if (s_enc) { opus_encoder_destroy(s_enc); s_enc = NULL; }
     if (s_dec) { opus_decoder_destroy(s_dec); s_dec = NULL; }
+    goldie_mutex_unlock(&s_opus_mutex);
+
+    goldie_mutex_destroy(&s_opus_mutex);
+    s_opus_mutex_initialized = 0;
 }
 
 int app_codec_opus_encode(const int16_t *pcm, int samples,
                           uint8_t *out, int cap, int *out_len)
 {
-    if (!s_enc) return APP_CODEC_ERR_NOT_INIT;
+    if (!s_opus_mutex_initialized) return APP_CODEC_ERR_NOT_INIT;
+
+    goldie_mutex_lock(&s_opus_mutex);
+    if (!s_enc) {
+        goldie_mutex_unlock(&s_opus_mutex);
+        return APP_CODEC_ERR_NOT_INIT;
+    }
     int ret = opus_encode(s_enc, pcm, samples, out, (opus_int32)cap);
+    goldie_mutex_unlock(&s_opus_mutex);
     if (ret < 0) {
         printf("[app_codec_opus] encode error: %d\n", ret);
         return APP_CODEC_ERR_ENCODE;
@@ -91,12 +121,65 @@ int app_codec_opus_encode(const int16_t *pcm, int samples,
 int app_codec_opus_decode(const uint8_t *buf, int len,
                           int16_t *pcm, int cap, int *out_samples)
 {
-    if (!s_dec) return APP_CODEC_ERR_NOT_INIT;
-    int ret = opus_decode(s_dec, buf, (opus_int32)len, pcm, cap, 0);
+    if (!s_opus_mutex_initialized) {
+        return APP_CODEC_ERR_NOT_INIT;
+    }
+
+    int frames = (buf != NULL && len > 0)
+                     ? opus_packet_get_nb_frames(buf, (opus_int32)len)
+                     : OPUS_BAD_ARG;
+
+    int spf = (buf != NULL && len > 0)
+                  ? opus_packet_get_samples_per_frame(buf, OPUS_SAMPLE_RATE)
+                  : 0;
+
+    int total = (buf != NULL && len > 0)
+                    ? opus_packet_get_nb_samples(
+                          buf,
+                          (opus_int32)len,
+                          OPUS_SAMPLE_RATE)
+                    : OPUS_BAD_ARG;
+
+    goldie_mutex_lock(&s_opus_mutex);
+
+    if (!s_dec) {
+        goldie_mutex_unlock(&s_opus_mutex);
+        return APP_CODEC_ERR_NOT_INIT;
+    }
+
+    int ret = opus_decode(
+        s_dec,
+        buf,
+        (opus_int32)len,
+        pcm,
+        cap,
+        0
+    );
+
+    goldie_mutex_unlock(&s_opus_mutex);
+
+    if (s_decode_diag_count < 40) {
+        printf(
+            "[app_codec_opus] decode "
+            "ret=%d len=%d cap=%d frames=%d spf=%d total=%d duration=%dms\n",
+            ret,
+            len,
+            cap,
+            frames,
+            spf,
+            total,
+            total > 0
+                ? total * 1000 / OPUS_SAMPLE_RATE
+                : -1
+        );
+
+        s_decode_diag_count++;
+    }
+
     if (ret < 0) {
-        printf("[app_codec_opus] decode error: %d\n", ret);
         return APP_CODEC_ERR_DECODE;
     }
+
     *out_samples = ret;
     return APP_CODEC_OK;
 }
@@ -128,4 +211,3 @@ int app_codec_opus_decode(const uint8_t *buf, int len,
 }
 
 #endif /* CONFIG_APP_ENABLE_OPUS */
-

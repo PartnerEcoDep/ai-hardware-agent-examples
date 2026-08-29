@@ -36,6 +36,10 @@ static audio_source_t g_audio_src = {0};
 
 #define AUDIO_UPLINK_DUMP_PATH     "audio_uplink_dump.wav"
 
+/* Temporary uplink diagnostics */
+static unsigned int s_uplink_diag_count = 0;
+#define UPLINK_DIAG_MAX 200
+
 /* ---- Shared audio HW accessor (downlink module reads this) ---- */
 const audio_hw_info_t *bridge_get_audio_hw(void)
 {
@@ -80,13 +84,105 @@ static int capture_one_frame(audio_source_t *s, AudioService *audio)
         planar_samples[frame_count + i] = 0;
 #endif
     }
+    /* Temporary diagnostics: verify capture frame size and L/R signal level. */
+    int peak_l = 0;
+    int peak_r = 0;
+
+    for (int i = 0; i < frame_count; i++) {
+        int l = (int)samples[i * 2];
+        int r = (int)samples[i * 2 + 1];
+
+        if (l < 0) l = -l;
+        if (r < 0) r = -r;
+
+        if (l > peak_l) peak_l = l;
+        if (r > peak_r) peak_r = r;
+    }
     /* Diagnostics: read-only metrics over the planar buffer (rmsL/rmsR/dc/zeros)
      * + vad_detect probe. Does not touch planar_buf/g711_buf or the encode path. */
     audio_diag_update(audio, planar_samples, (size_t)frame_count, 1);
     int enc_len = 0;
-    int enc_ret = app_codec_encode(planar_samples, sample_count,
+    int enc_ret;
+
+    if (app_codec_get_id() == APP_CODEC_OPUS) {
+        /* Opus needs 16kHz mono, but hardware is 8kHz stereo.
+         * Extract L channel (mono) → upsample 8kHz → 16kHz → encode. */
+        static int16_t mono_buf[CONVAI_BUDGET_AUDIO_RECORD_BYTES / 2];
+        static int16_t upsampled_buf[CONVAI_BUDGET_AUDIO_RECORD_BYTES / 2];
+
+        /* Step 1: extract left channel (mic) as mono */
+        for (int i = 0; i < frame_count; i++) {
+            mono_buf[i] = planar_samples[i];
+        }
+
+        /* Step 2: linear upsample from hardware rate to 16kHz */
+        int target_sr = app_codec_get_sample_rate();  /* 16000 for Opus */
+        int hw_sr = s->sample_rate ? s->sample_rate : 8000;
+        int up_count = 0;
+
+        if (target_sr > hw_sr && target_sr > 0 && hw_sr > 0) {
+            double ratio = (double)target_sr / hw_sr;
+            up_count = (int)(frame_count * ratio);
+            if (up_count > (int)(sizeof(upsampled_buf) / sizeof(int16_t)))
+                up_count = (int)(sizeof(upsampled_buf) / sizeof(int16_t));
+            for (int i = 0; i < up_count; i++) {
+                double src_idx = i / ratio;
+                int idx0 = (int)src_idx;
+                int idx1 = idx0 + 1;
+                if (idx0 >= frame_count) idx0 = frame_count - 1;
+                if (idx1 >= frame_count) idx1 = frame_count - 1;
+                double frac = src_idx - idx0;
+                upsampled_buf[i] = (int16_t)(mono_buf[idx0] * (1.0 - frac)
+                                             + mono_buf[idx1] * frac);
+            }
+        } else {
+            /* same rate: copy directly */
+            for (int i = 0; i < frame_count; i++)
+                upsampled_buf[i] = mono_buf[i];
+            up_count = frame_count;
+        }
+
+        int do_diag = (s_uplink_diag_count < UPLINK_DIAG_MAX);
+
+        if (do_diag) {
+            printf("[UPLINK-CAP] len=%d sample_count=%d frame_count=%d "
+                   "hw_sr=%d target_sr=%d up_count=%d "
+                   "peakL=%d peakR=%d\n",
+                   len,
+                   sample_count,
+                   frame_count,
+                   hw_sr,
+                   target_sr,
+                   up_count,
+                   peak_l,
+                   peak_r);
+
+            if ((len % 4) != 0) {
+                printf("[UPLINK-WARN] capture len=%d is not aligned to "
+                       "stereo PCM16 frame size (4 bytes)\n",
+                       len);
+            }
+        }
+
+        enc_ret = app_codec_encode(upsampled_buf, up_count,
                                    g711_buf, CONVAI_BUDGET_AUDIO_RECORD_BYTES,
                                    &enc_len);
+
+        if (do_diag || enc_ret != APP_CODEC_OK || enc_len <= 0) {
+            printf("[UPLINK-ENC] samples=%d ret=%d enc_len=%d\n",
+                   up_count,
+                   enc_ret,
+                   enc_len);
+        }
+
+        if (do_diag) {
+            s_uplink_diag_count++;
+        }
+    } else {
+        enc_ret = app_codec_encode(planar_samples, sample_count,
+                                   g711_buf, CONVAI_BUDGET_AUDIO_RECORD_BYTES,
+                                   &enc_len);
+    }
     if (enc_ret != APP_CODEC_OK || enc_len == 0) {
         printf("[convai_bridge] WARNING: codec encode failed (ret=%d)\n", enc_ret);
         return 0;
@@ -229,9 +325,15 @@ static int start_record_thread(int (*fn)(void *), const char *tag)
      * run with running==0 and exit immediately (silent mic failure). */
     g_audio_src.running = 1;
 
+#ifdef PLATFORM_TYPE_WIN
+    const unsigned int stack_size = 128U * 1024U;
+#else
+    const unsigned int stack_size = CONVAI_BUDGET_AUDIO_UPLINK_STACK_BYTES;
+#endif
     g_audio_src.thread_handle = goldie_thread_create(
-        (goldie_thread_handler)fn, NULL, "convai_audio",
-        CONVAI_BUDGET_AUDIO_UPLINK_STACK_BYTES);
+//        (goldie_thread_handler)fn, NULL, "convai_audio",
+//        CONVAI_BUDGET_AUDIO_UPLINK_STACK_BYTES);
+        (goldie_thread_handler)fn, NULL, "convai_audio", stack_size);
     if (g_audio_src.thread_handle) {
         goldie_thread_set_priority(g_audio_src.thread_handle, 22);
         printf("[convai_bridge] %s: record thread started\n", tag);

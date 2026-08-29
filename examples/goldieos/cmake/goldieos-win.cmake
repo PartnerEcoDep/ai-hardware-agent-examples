@@ -49,6 +49,7 @@ function(goldieos_add_win_target)
     # simulator so those implementations compile to their no-op variants.
     target_compile_definitions("${_arg_TARGET}" PRIVATE
         PLATFORM_TYPE_WIN
+        CONFIG_APP_ENABLE_OPUS=1
         ST7789_SPI_LCD
         TF_LITE_STATIC_MEMORY
         TF_LITE_DISABLE_X86_NEON
