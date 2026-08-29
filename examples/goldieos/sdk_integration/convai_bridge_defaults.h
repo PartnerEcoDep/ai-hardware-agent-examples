@@ -19,6 +19,9 @@ const char *bridge_get_default_agent_id(void);
 /** Get the default startup config JSON string. */
 const char *bridge_get_default_startup_config(void);
 
+/** Get the configured audio codec ID, defaulting to G.711A (0). */
+int bridge_get_default_codec_id(void);
+
 /**
  * Build the create-time JSON config string into @p buf.
  * @param device_name  Device name for the config (e.g. WiFi MAC from the app

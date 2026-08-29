@@ -162,7 +162,11 @@ static int win_thread_create(convai_thread_t **thread,
     args[1] = arg;
     args[2] = (void*)t;
 
-    unsigned int ss = stack_size > 0 ? stack_size : 4096;
+    unsigned int ss = stack_size > 0 ? (unsigned int)stack_size : 4096U;
+
+    if (ss < 128U * 1024U) {
+        ss = 128U * 1024U;
+    }
     const char *n = name ? name : "convai";
 
     goldie_sem_init(&t->exit_sem);

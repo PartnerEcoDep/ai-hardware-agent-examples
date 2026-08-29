@@ -38,8 +38,13 @@ function(goldieos_add_opus)
     elseif(_arg_PLATFORM STREQUAL "goldieos"
             OR _arg_PLATFORM STREQUAL "goldieos-win"
             OR _arg_PLATFORM STREQUAL "win")
-        set(OPUS_NONTHREADSAFE_PSEUDOSTACK ON CACHE BOOL
-            "Enable pseudostack" FORCE)
+        # The simulator encodes uplink audio and decodes downlink audio on
+        # different threads. A global pseudostack is not safe for those
+        # concurrent Opus calls, so use per-call variable-length arrays.
+        set(OPUS_VAR_ARRAYS OFF CACHE BOOL "Disable unavailable variable length arrays" FORCE)
+        set(OPUS_USE_ALLOCA ON CACHE BOOL "Enable thread-safe alloca temporary storage" FORCE)
+        set(OPUS_NONTHREADSAFE_PSEUDOSTACK OFF CACHE BOOL
+                "Disable non-thread-safe pseudostack" FORCE)
         set(OPUS_CUSTOM_API ON CACHE BOOL "Enable custom API" FORCE)
         set(OPUS_X86_MAY_HAVE_SSE OFF CACHE BOOL "Disable SSE" FORCE)
         set(OPUS_X86_MAY_HAVE_SSE2 OFF CACHE BOOL "Disable SSE2" FORCE)

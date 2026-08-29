@@ -9,6 +9,7 @@
 #include "convai_config_file.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define BRIDGE_DEFAULT_BOT_ID         "your_agent_id"       // <- 替换为实际的 agent_id
@@ -55,6 +56,19 @@ const char *bridge_get_default_startup_config(void)
     return DEFAULT_STARTUP_CONFIG;
 }
 
+int bridge_get_default_codec_id(void)
+{
+    const char *value = cfg_or("codec", "0");
+    char *end = NULL;
+    long codec = strtol(value, &end, 10);
+
+    /* Valid codec IDs are 0..4. Fall back to G.711A for malformed values. */
+    if (end == value || *end != '\0' || codec < 0 || codec > 4) {
+        return 0;
+    }
+    return (int)codec;
+}
+
 /**
  * Build the create-time JSON config string, filling in values from the
  * config file where available, otherwise using hardcoded defaults.
@@ -70,6 +84,7 @@ const char *bridge_build_config_json(char *buf, size_t buf_size,
     const char *api_key = cfg_or("api_key", NULL);
 
     const char *server_url = cfg_or("server_url", NULL);
+    int codec_id = bridge_get_default_codec_id();
 
     int n;
 
@@ -115,8 +130,7 @@ const char *bridge_build_config_json(char *buf, size_t buf_size,
                 "\"codec\":%d"
             "}"
         "}"
-    "}", 0);
+    "}", codec_id);
     (void)n; /* truncation is acceptable — engine will reject malformed JSON */
     return buf;
 }
-
