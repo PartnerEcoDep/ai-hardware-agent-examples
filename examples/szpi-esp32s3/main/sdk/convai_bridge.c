@@ -280,17 +280,26 @@ static void on_status(convai_engine_t engine, convai_status_e status,
 static void on_audio(convai_engine_t engine, const void *data, size_t len,
                      const convai_audio_frame_info_t *info, void *user_data) {
   (void)engine; (void)info; (void)user_data;
-  /* 诊断: 每 20 帧打一次到达间隔; >600ms=服务器下发慢, <600ms=突发倒灌. */
+  /* 诊断: 异常时打印，正常匀速(15~60ms)
+   * >200ms: 后端下发慢或网络延迟
+   * <15ms: 网络倒灌
+   * 60 ~ 200ms: 抖动
+   */
   static unsigned dl_cnt = 0;
   static int64_t dl_last_us = 0;
-  if ((++dl_cnt % 20) == 0) {
+  static unsigned ok_cnt = 0;
+  {
     int64_t now_us = esp_timer_get_time();
     int64_t gap_ms = (dl_last_us > 0) ? (now_us - dl_last_us) / 1000 : 0;
     dl_last_us = now_us;
-    ESP_LOGI(TAG, "downlink on_audio: len=%u data_type=%d batch_gap_ms=%lld",
-             (unsigned)len, info ? (int)info->data_type : -1,
-             (long long)gap_ms);
+    if (gap_ms >= 200){
+      ESP_LOGW(TAG, "audio #%u gap=%lldms SLOW (after %u ok)", dl_cnt, (long long)gap_ms, ok_cnt);
+      ok_cnt = 0;
+    } else {
+      ok_cnt++;
+    }
   }
+  dl_cnt++;
 
   audio_codec_t *codec = audio_codec_active();
   if (codec == NULL) {
@@ -337,8 +346,8 @@ static void on_audio(convai_engine_t engine, const void *data, size_t len,
       }
       if (s_playback_flush || waited > 2000) {
         s_playback_dropped += pcm_bytes;
-        if ((dl_cnt % 20) == 0) {
-          ESP_LOGW(TAG, "playback ring full, dropped=%u",
+        if (s_playback_dropped > 0 && (dl_cnt % 20) == 0) {
+          ESP_LOGW(TAG, "downlink dropped=%u",
                    (unsigned)s_playback_dropped);
         }
       }

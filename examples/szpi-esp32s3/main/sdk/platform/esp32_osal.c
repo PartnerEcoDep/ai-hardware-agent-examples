@@ -112,7 +112,7 @@ typedef struct {
 } esp32_thread_args_t;
 
 #define THREAD_DEFAULT_STACK     4096
-#define THREAD_DEFAULT_PRIORITY  (tskIDLE_PRIORITY + 2)
+#define THREAD_DEFAULT_PRIORITY  (tskIDLE_PRIORITY + 10) //高于LVGL(7),低于lwIP(18)/WIFI(23)
 #define THREAD_DEFAULT_NAME      "convai"
 
 static void esp32_thread_entry(void *pv) {
