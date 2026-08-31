@@ -91,10 +91,11 @@ int convai_bridge_send_audio(const uint8_t *data, size_t len,
 
 /* ---- Audio Mode / PTT ---- */
 
-/** Audio recording mode */
+
 typedef enum {
-    CONVAI_BRIDGE_AUDIO_AUTO = 0,  /**< Continuous recording, server-side VAD */
-    CONVAI_BRIDGE_AUDIO_PTT  = 1,  /**< Push-to-talk: manual press/release */
+    CONVAI_BRIDGE_AUDIO_AUTO     = 0,  /**< Continuous recording, server-side VAD (duplex, legacy) */
+    CONVAI_BRIDGE_AUDIO_PTT      = 1,  /**< Push-to-talk: manual press/release (push2talk mode) */
+    CONVAI_BRIDGE_AUDIO_TAP2TALK = 2,  /**<  VAD + idle_timeout_ms=5000, tap to start */
 } convai_bridge_audio_mode_t;
 
 /**
@@ -128,15 +129,26 @@ void convai_bridge_ptt_release(void);
 /** Non-zero if PTT button is currently pressed (recording in progress). */
 int convai_bridge_ptt_is_pressed(void);
 
+
+void convai_bridge_tap_start(void);
+
+
+void convai_bridge_tap_stop(void);
+
+/** Non-zero if TAP2TALK is currently recording. */
+int convai_bridge_tap_is_active(void);
+
 /* ---- Callback types (for apps that need status notifications) ---- */
 typedef void (*convai_bridge_status_cb)(convai_status_e status);
 typedef void (*convai_bridge_event_cb)(convai_event_code_e event_type, const char *info);
 typedef void (*convai_bridge_message_cb)(const char *message);
+typedef void (*convai_bridge_tap_state_cb)(int is_active);
 
 /** Register callbacks for status changes, connection events, and emotion updates. */
 void convai_bridge_on_status(convai_bridge_status_cb cb);
 void convai_bridge_on_event(convai_bridge_event_cb cb);
 void convai_bridge_on_message(convai_bridge_message_cb cb);
+void convai_bridge_on_tap_state(convai_bridge_tap_state_cb cb);
 
 /**
  * Set / get the startup config JSON passed to convai_start() via
@@ -160,3 +172,5 @@ void convai_bridge_set_device_name(const char *name);
 #endif
 
 #endif /* CONVAI_BRIDGE_H */
+
+

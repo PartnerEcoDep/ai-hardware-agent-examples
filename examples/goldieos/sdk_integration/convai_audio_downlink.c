@@ -132,11 +132,9 @@ static int playback_thread_func(void *arg)
         switch (ctrl->state) {
         /* ---- HW stopped, waiting for next response ---- */
         case PLAYBACK_IDLE:
-            if (prev_state != PLAYBACK_IDLE) {
-                if (hw_started && audio && audio->play_stop) {
-                    audio->play_stop();
-                    hw_started = 0;
-                }
+            if (hw_started && audio && audio->play_stop) {
+                audio->play_stop();
+                hw_started = 0;
                 printf("[convai_bridge] playback HW stopped\n");
             }
             goldie_msleep(20);
@@ -473,4 +471,6 @@ int bridge_downlink_get_stats(unsigned int *dropped_bytes)
     *dropped_bytes = g_playback_ctrl.dropped_bytes;
     return 0;
 }
+
+
 

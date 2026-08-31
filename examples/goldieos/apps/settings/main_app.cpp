@@ -271,6 +271,7 @@ static void show_voice_setting();
 static void show_person_setting();
 static void show_apikey_setting();
 static void cloud_status_callback(convai_status_e status);
+static void tap_state_callback(int is_active);
 
 #if 0
 /* 音量控制函数声明 */
@@ -364,6 +365,14 @@ static void cloud_status_callback(convai_status_e status) {
     sdk_status = status;
 }
 
+
+static void tap_state_callback(int is_active) {
+    if (ButtonView_taptalk && ButtonView_taptalk->isVisible()) {
+        ButtonView_taptalk->setText(is_active ? "点击结束" : "点击说话");
+        printf("[TAP2TALK] UI updated: button text = %s\n", is_active ? "点击结束" : "点击说话");
+    }
+}
+
 static void cloud_event_callback(convai_event_code_e event_type, const char *info) {
     uint16_t color;
     const char *text;
@@ -374,6 +383,10 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
             /* PTT 模式下连接成功时显示"按住说话"按钮 */
             if (convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_PTT) {
                 ButtonView_ptttalk->setVisible(true);
+            }
+
+            if (convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+                ButtonView_taptalk->setVisible(true);
             }
             break;
         case CONVAI_EV_DISCONNECTED:
@@ -394,6 +407,7 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
                 }
             }
             ButtonView_ptttalk->setVisible(false);  /* 断开连接时隐藏 PTT 按钮 */
+            ButtonView_taptalk->setVisible(false);
             break;
         default: return;
     }
@@ -639,7 +653,7 @@ static void talk_ui_hide_cb(void)
 
     /* refresh avatar in case it was changed via config */
     LabelView_pic->setImageBuffer(avatar_pic_list[current_avatrid]);
-    LabelView_avashow0->setText(avatar_list[current_avatrid], 24, 2);
+    LabelView_avashow0->setText(avatar_list[current_avatrid], 49, 2);
 
     Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
     printf("[Talk] talk page hidden, back to cloud page\n");
@@ -1018,7 +1032,7 @@ static void show_cloud_page(){
 
 
     LabelView_pic->setImageBuffer(avatar_pic_list[current_avatrid]);
-    LabelView_avashow0->setText(avatar_list[current_avatrid],24,2);
+    LabelView_avashow0->setText(avatar_list[current_avatrid],49,2);
     Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
 }
 static void show_wifi_page() {
@@ -1364,7 +1378,7 @@ static void on_ai_setting_changed(int new_value, int setting_type)
         restore_ai_config();
 
         /* restore avatar display */
-        LabelView_avashow0->setText(avatar_list[current_avatrid], 24, 2);
+        LabelView_avashow0->setText(avatar_list[current_avatrid], 49, 2);
         LabelView_pic->setImageBuffer(avatar_pic_list[current_avatrid]);
     }
 }
@@ -1397,9 +1411,7 @@ static void init_views(void)
 	 show_voice_setting();
     });
 
-    /* 音频模式切换按钮 (AUTO / PTT)
-     * Mode is bound to a session: switching is refused while a session is
-     * active. The user must stop the session first, then switch, then restart. */
+
     ButtonView_automode->setOnClick([](void*) {
         printf("[Settings] Switch to AUTO audio mode\n");
         if (convai_bridge_set_audio_mode(CONVAI_BRIDGE_AUDIO_AUTO) != 0) {
@@ -1407,8 +1419,10 @@ static void init_views(void)
             return;  /* keep current button selection state */
         }
         ButtonView_ptttalk->setVisible(false);
+        ButtonView_taptalk->setVisible(false);
         ButtonView_automode->setColor(0x3F03);  /* 选中 */
-        ButtonView_pttmode->setColor(0x3CE7);   /* 未选中 */
+        ButtonView_pttmode->setColor(0x3CE7);
+        ButtonView_tap2talk->setColor(0x3CE7);
         Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
     });
 
@@ -1419,8 +1433,25 @@ static void init_views(void)
             return;  /* keep current button selection state */
         }
         ButtonView_ptttalk->setVisible(true);  /* 显示"按住说话"按钮 */
-        ButtonView_automode->setColor(0x3CE7);  /* 未选中 */
+        ButtonView_taptalk->setVisible(false);
+        ButtonView_automode->setColor(0x3CE7);
         ButtonView_pttmode->setColor(0x3F03);   /* 选中 */
+        ButtonView_tap2talk->setColor(0x3CE7);
+        Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
+    });
+
+
+    ButtonView_tap2talk->setOnClick([](void*) {
+        printf("[Settings] Switch to TAP2TALK audio mode\n");
+        if (convai_bridge_set_audio_mode(CONVAI_BRIDGE_AUDIO_TAP2TALK) != 0) {
+            printf("[Settings] TAP2TALK switch refused: session active, stop first\n");
+            return;
+        }
+        ButtonView_ptttalk->setVisible(false);  /* TAP2TALK 不需要按住说话按钮 */
+        ButtonView_taptalk->setVisible(true);
+        ButtonView_automode->setColor(0x3CE7);
+        ButtonView_pttmode->setColor(0x3CE7);
+        ButtonView_tap2talk->setColor(0x3F03);  /* 选中 */
         Window_main->flush(0, 0, APP_WINDOW_WIDTH, APP_WINDOW_HEIGHT);
     });
 
@@ -1738,7 +1769,7 @@ SpinnerView_sle_mode->setOnItemSelect([](int index, const char* text) {
         on_ai_setting_changed(itemId, cloud_current_cfg_page);
 
         /* refresh avatar display (handles both normal update and rollback) */
-        LabelView_avashow0->setText(avatar_list[current_avatrid], 24, 2);
+        LabelView_avashow0->setText(avatar_list[current_avatrid], 49, 2);
         LabelView_pic->setImageBuffer(avatar_pic_list[current_avatrid]);
 
         show_cloud_page();
@@ -1769,6 +1800,27 @@ static void goldie_touch_event(int pressure, int x, int y)
             return; /* 已处理，不再传递给 Window_main */
         }
     }
+    if (FrameView_cloud->isVisible() &&
+        convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_TAP2TALK &&
+        ButtonView_taptalk->isVisible()) {
+        /* 触摸检测区域与 PTT 按钮相同 (128, 186), 152x40 */
+        if (x >= 128 && x <= 128 + 152 && y >= 186 && y <= 186 + 40) {
+            if (pressure == 1) {
+                /* 点击切换: 正在录音则停止，否则开始 */
+                if (convai_bridge_tap_is_active()) {
+                    printf("[TAP2TALK] tap to stop\n");
+                    convai_bridge_tap_stop();
+                    ButtonView_taptalk->setText("点击说话");
+                } else {
+                    printf("[TAP2TALK] tap to start\n");
+                    convai_bridge_tap_start();
+                    ButtonView_taptalk->setText("点击结束");
+                }
+                Window_main->flush(128, 186, 152, 40);
+            }
+            return; /* 已处理，不再传递给 Window_main */
+        }
+    }
     Window_main->handleEvent(pressure, x, y);
 }
 
@@ -1781,6 +1833,7 @@ static void goldie_app_run(void)
     sdk_engine = convai_bridge_get_engine();
     convai_bridge_on_status(cloud_status_callback);
     convai_bridge_on_event(cloud_event_callback);
+    convai_bridge_on_tap_state(tap_state_callback);
     func_handlers_register();
     init_cloud_configs();
 
@@ -1812,6 +1865,7 @@ static void goldie_app_suspend(void)
     talk_page_stop_animation();
     if(sdk_engine)convai_bridge_on_status(NULL);
     if(sdk_engine)convai_bridge_on_event(NULL);
+    if(sdk_engine)convai_bridge_on_tap_state(NULL);
     func_handlers_unregister();
     window_suspend();
 }
@@ -1820,6 +1874,7 @@ static void goldie_app_resume(void)
 {
     if(sdk_engine)convai_bridge_on_status(cloud_status_callback);
     if(sdk_engine)convai_bridge_on_event(cloud_event_callback);
+    if(sdk_engine)convai_bridge_on_tap_state(tap_state_callback);
     func_handlers_register();
     window_resume();
     /* resume animation if talk page is visible */
@@ -1846,6 +1901,7 @@ static void goldie_app_exit(void)
     sdk_status = sdk_engine ? convai_bridge_get_status() : CONVAI_STATUS_IDLE;
    if(sdk_engine)convai_bridge_on_status(NULL);
    if(sdk_engine)convai_bridge_on_event(NULL);
+   if(sdk_engine)convai_bridge_on_tap_state(NULL);
    func_handlers_unregister();
    wifi_service->register_callback(NULL);
 #ifdef SUPPORT_SLE
@@ -1942,3 +1998,5 @@ static void test_entry(void)
 }
 
 GOLDIE_INIT_CALL_(test_entry);
+
+
