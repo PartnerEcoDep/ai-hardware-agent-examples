@@ -14,6 +14,7 @@
 #include "sdk_init.h"
 
 #include "convai_bridge.h"
+#include "convai_func_handlers.h"
 #include "convai_platform_esp32.h"
 #include "convai_platform_esp32_internal.h"
 
@@ -43,5 +44,6 @@ esp_err_t sdk_init(void) {
   }
 
   convai_bridge_init();
+  func_handlers_register();
   return ESP_OK;
 }
