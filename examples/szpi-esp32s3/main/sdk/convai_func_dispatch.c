@@ -31,6 +31,14 @@ static const char *object_string(cJSON *object, const char *key) {
   return (item != NULL && cJSON_IsString(item)) ? item->valuestring : NULL;
 }
 
+static void log_function_call(const char *call_id, const char *name,
+                              const char *arguments) {
+  ESP_LOGI(TAG, "call_id=%s", call_id != NULL ? call_id : "(null)");
+  ESP_LOGI(TAG, "name=%s", name != NULL ? name : "(null)");
+  ESP_LOGI(TAG, "arguments=%s",
+           arguments != NULL ? arguments : "(null)");
+}
+
 static convai_func_handler_t find_handler(const char *name) {
   for (int i = 0; i < s_registry_count; ++i) {
     if (strcmp(name, s_registry[i].name) == 0) {
@@ -155,6 +163,7 @@ static cJSON *create_call_response(cJSON *call) {
     name = object_string(call, "name");
     arguments = object_string(call, "arguments");
   }
+  log_function_call(call_id, name, arguments);
 
   cJSON *args_json = arguments != NULL ? cJSON_Parse(arguments) : NULL;
   char output_buf[FUNC_DISPATCH_OUTPUT_BYTES] = {0};
@@ -182,12 +191,11 @@ static void send_function_call_response(cJSON *response) {
     return;
   }
 
+  ESP_LOGI(TAG, "sending function call result: %s", response_str);
   int ret =
       convai_send_message(engine, response_str, strlen(response_str), NULL);
   if (ret != CONVAI_OK) {
     ESP_LOGE(TAG, "send function-call response failed: %d", ret);
-  } else {
-    ESP_LOGI(TAG, "function-call response sent");
   }
   cJSON_free(response_str);
 }
