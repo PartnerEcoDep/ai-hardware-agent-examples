@@ -369,6 +369,11 @@ static void cloud_status_callback(convai_status_e status) {
 static void tap_state_callback(int is_active) {
     if (ButtonView_taptalk && ButtonView_taptalk->isVisible()) {
         ButtonView_taptalk->setText(is_active ? "点击结束" : "点击说话");
+        /* flush is required: when TAP auto-stops (watchdog timeout), this
+         * callback fires from the watchdog thread — without flush the text
+         * change is buffered but never rendered, so the user still sees
+         * "点击结束" even though the button is logically inactive. */
+        Window_main->flush(128, 186, 152, 40);
         printf("[TAP2TALK] UI updated: button text = %s\n", is_active ? "点击结束" : "点击说话");
     }
 }
@@ -407,6 +412,10 @@ static void cloud_event_callback(convai_event_code_e event_type, const char *inf
                 }
             }
             ButtonView_ptttalk->setVisible(false);  /* 断开连接时隐藏 PTT 按钮 */
+            /* TAP 模式：断开连接时 TAP 已停止，重置按钮文本为初始状态 */
+            if (convai_bridge_get_audio_mode() == CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+                ButtonView_taptalk->setText("点击说话");
+            }
             ButtonView_taptalk->setVisible(false);
             break;
         default: return;
@@ -1998,5 +2007,6 @@ static void test_entry(void)
 }
 
 GOLDIE_INIT_CALL_(test_entry);
+
 
 
