@@ -111,6 +111,11 @@ int talk_page_is_visible(void)
 
 void talk_page_set_emotion(int emotion)
 {
+    convai_bridge_audio_mode_t mode = convai_bridge_get_audio_mode();
+    if (mode == CONVAI_BRIDGE_AUDIO_PTT || mode == CONVAI_BRIDGE_AUDIO_TAP2TALK) {
+        talk_current_emotion = EMOTION_NEUTRAL;
+        return;
+    }
     talk_current_emotion = emotion;
 }
 
@@ -148,3 +153,4 @@ static int talk_play_task(void *param)
     goldie_sem_post(&talk_exit_sem);
     return 0;
 }
+

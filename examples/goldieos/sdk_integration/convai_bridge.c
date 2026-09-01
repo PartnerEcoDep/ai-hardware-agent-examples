@@ -11,6 +11,8 @@
 #include "convai_config_file.h"
 #include "convai_audio_internal.h"
 #include "convai_comfort.h"
+#include "convai_ptt.h"
+#include "convai_tap.h"
 #include "convai_memory_budget.h"
 #include "service_manager.h"
 #include "goldie_osal.h"
@@ -34,6 +36,7 @@ static char g_startup_config[CONVAI_BUDGET_STARTUP_CONFIG_BYTES] = {0};
 static char g_device_name[CONVAI_BUDGET_DEVICE_NAME_BYTES] = {0};
 
 static char g_json_copy_buf[CONVAI_BUDGET_JSON_COPY_BYTES]; /* 用于 on_message_data 回调 */
+
 
 /* ---- Internal accessors (consumed by audio modules) ---- */
 convai_engine_t bridge_get_engine(void) { return g_engine; }
@@ -59,11 +62,24 @@ static void on_event(convai_engine_t e, convai_event_t *ev, void *ud)
     case CONVAI_EV_FAILED:
         info = ev->data.details ? ev->data.details : "";
         printf("[convai_bridge] EVENT: FAILED %s\n", ev->data.details);
-        bridge_cleanup();
         break;
     default: break;
     }
     if (g_event_cb) g_event_cb(ev->code, info);
+}
+
+/* Helper: convert status enum to string for logging */
+static const char *status_to_str(convai_status_e s)
+{
+    switch (s) {
+        case CONVAI_STATUS_IDLE:            return "IDLE";
+        case CONVAI_STATUS_LISTENING:       return "LISTENING";
+        case CONVAI_STATUS_THINKING:        return "THINKING";
+        case CONVAI_STATUS_ANSWERING:       return "ANSWERING";
+        case CONVAI_STATUS_INTERRUPTED:     return "INTERRUPTED";
+        case CONVAI_STATUS_ANSWER_FINISHED: return "ANSWER_FINISH";
+        default:                            return "?";
+    }
 }
 
 static void on_status(convai_engine_t e, convai_status_e s, void *ud)
@@ -71,23 +87,17 @@ static void on_status(convai_engine_t e, convai_status_e s, void *ud)
     (void)e; (void)ud;
     g_status = s;
     if (g_status_cb) g_status_cb(s);
-    const char *str = "?";
-    switch (g_status) {
-        case CONVAI_STATUS_IDLE:          str = "IDLE"; break;
-        case CONVAI_STATUS_LISTENING:     str = "LISTENING"; break;
-        case CONVAI_STATUS_THINKING:      str = "THINKING"; break;
-        case CONVAI_STATUS_ANSWERING:     str = "ANSWERING"; break;
-        case CONVAI_STATUS_INTERRUPTED:   str = "INTERRUPTED"; break;
-        case CONVAI_STATUS_ANSWER_FINISHED: str = "ANSWER_FINISH"; break;
-    }
 
-    printf("[STATUS] %s\n", str);
+    printf("[STATUS] %s\n", status_to_str(s));
 
     /* Forward to downlink module for playback state machine */
     bridge_downlink_on_status(s);
 
     /* Forward to comfort module for response-timeout arming */
     bridge_comfort_on_status(s);
+
+    /* Forward to tap module for watchdog state machine */
+    bridge_tap_on_status(s);
 }
 
 static void on_audio(convai_engine_t e, const void *data, size_t len,
@@ -226,6 +236,48 @@ int convai_bridge_start(void)
     return ret;
 }
 
+/**
+ * Apply server-side turn_detection config based on current audio mode.
+ * Dispatches to the PTT/TAP modules for their mode-specific JSON;
+ * AUTO (duplex) is handled inline since it has no dedicated module.
+ *
+ * Audio modes map to different VAD strategies:
+ *   PTT      -> turn_detection = null (manual control)
+ *   TAP2TALK -> server_vad + idle_timeout_ms=5000, interrupt_response=false
+ *   AUTO     -> server_vad + interrupt_response=true (duplex)
+ */
+static void bridge_apply_turn_detection(void)
+{
+    convai_bridge_audio_mode_t mode = bridge_uplink_get_audio_mode();
+
+    switch (mode) {
+        case CONVAI_BRIDGE_AUDIO_PTT:
+            bridge_ptt_apply_turn_detection();
+            break;
+        case CONVAI_BRIDGE_AUDIO_TAP2TALK:
+            bridge_tap_apply_turn_detection();
+            break;
+        case CONVAI_BRIDGE_AUDIO_AUTO: {
+            /* AUTO: server_vad + interrupt_response=true (duplex) */
+            const char *session_update =
+                "{\"session\":{\"audio\":{\"input\":{\"turn_detection\":"
+                "{\"type\":\"server_vad\",\"threshold\":0.5,\"prefix_padding_ms\":300,"
+                "\"silence_duration_ms\":200,\"create_response\":true,"
+                "\"interrupt_response\":true}}}}}";
+            int ret = convai_update(g_engine, session_update);
+            if (ret != CONVAI_OK) {
+                printf("[convai_bridge] ERROR: convai_update(turn_detection) failed: %s\n",
+                       convai_err_2_str(ret));
+            } else {
+                printf("[convai_bridge] turn_detection applied for mode: AUTO\n");
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 /* Bridge-layer startup: audio recording + playback threads, state.
  * Does NOT call convai_start() — caller handles SDK initialization. */
 static void bridge_setup(void)
@@ -258,6 +310,9 @@ static void bridge_setup(void)
     if (g_status_cb) g_status_cb(g_status);
 
     printf("[convai_bridge] bridge setup done (IDLE)\n");
+
+    /* Apply server-side turn_detection based on audio mode */
+    bridge_apply_turn_detection();
 }
 
 /* Clean up bridge-layer resources: audio threads, hardware, state.
@@ -267,6 +322,7 @@ static void bridge_cleanup(void)
     if (!g_started) return;
 
     bridge_uplink_stop();
+    bridge_tap_stop_watchdog();
     bridge_comfort_stop();
     bridge_downlink_stop();
 
@@ -302,6 +358,7 @@ int convai_bridge_restart(void)
     return convai_bridge_start();
 }
 
+
 convai_engine_t convai_bridge_get_engine(void)     { return g_engine; }
 convai_status_e convai_bridge_get_status(void)     { return g_status; }
 int convai_bridge_is_speaking(void)                { return (g_status == CONVAI_STATUS_ANSWERING); }
@@ -335,10 +392,17 @@ convai_bridge_audio_mode_t convai_bridge_get_audio_mode(void)
 {
     return bridge_uplink_get_audio_mode();
 }
-void convai_bridge_ptt_press(void)   { bridge_uplink_ptt_press(); }
-void convai_bridge_ptt_release(void) { bridge_uplink_ptt_release(); }
-int  convai_bridge_ptt_is_pressed(void) { return bridge_uplink_ptt_is_pressed(); }
+void convai_bridge_ptt_press(void)             { bridge_ptt_press(); }
+void convai_bridge_ptt_release(void)           { bridge_ptt_release(); }
+int  convai_bridge_ptt_is_pressed(void)        { return bridge_ptt_is_pressed(); }
+
+void convai_bridge_tap_start(void)             { bridge_tap_start(); }
+void convai_bridge_tap_stop(void)              { bridge_tap_stop(); }
+int  convai_bridge_tap_is_active(void)          { return bridge_tap_is_active(); }
 
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }
+void convai_bridge_on_tap_state(convai_bridge_tap_state_cb cb) { bridge_tap_set_state_cb(cb); }
+
+
