@@ -180,6 +180,8 @@ static std::shared_ptr<ButtonView> ButtonView_ava;
 static std::shared_ptr<ButtonView> ButtonView_automode;   /* 自动模式按钮 */
 static std::shared_ptr<ButtonView> ButtonView_pttmode;    /* 按键模式按钮 */
 static std::shared_ptr<ButtonView> ButtonView_ptttalk;    /* PTT 按住说话按钮 */
+static std::shared_ptr<ButtonView> ButtonView_tap2talk;   /* tap2talk 模式按钮 */
+static std::shared_ptr<ButtonView> ButtonView_taptalk;    /* TAP2TALK 点击说话按钮 */
 static std::shared_ptr<LabelView> LabelView_status_conn;
 static std::shared_ptr<LabelView> LabelView_status_conv;
 static std::shared_ptr<FrameView> FrameView_cloud;
@@ -601,6 +603,22 @@ static void main_ui_init()
     ButtonView_ptttalk->setBoundaryBuffer(nullptr);
     ButtonView_ptttalk->setVisible(false);
 
+
+    ButtonView_tap2talk = std::make_shared<ButtonView>(40, 24);
+    ButtonView_tap2talk->setColor(0x3CE7);
+    ButtonView_tap2talk->setTextColor(0x0000);
+    ButtonView_tap2talk->setText("tap");
+    ButtonView_tap2talk->setBoundaryBuffer(nullptr);
+    ButtonView_tap2talk->setVisible(true);
+
+
+    ButtonView_taptalk = std::make_shared<ButtonView>(152, 16);
+    ButtonView_taptalk->setColor(0x3F03);
+    ButtonView_taptalk->setTextColor(0xFFFF);
+    ButtonView_taptalk->setText("点击说话");
+    ButtonView_taptalk->setBoundaryBuffer(nullptr);
+    ButtonView_taptalk->setVisible(false);
+
     /* status indicator lights (connection + conversation state)
      * placed side-by-side below the avatar, aligned to its right edge */
     LabelView_status_conn = std::make_shared<LabelView>(76, 16);
@@ -736,7 +754,9 @@ static void main_ui_init()
     FrameView_cloud->addView(LabelView_status_conv, 204, 214);
     FrameView_cloud->addView(ButtonView_automode, 110, 41);
     FrameView_cloud->addView(ButtonView_pttmode, 140, 41);
+    FrameView_cloud->addView(ButtonView_tap2talk, 170, 41);
     FrameView_cloud->addView(ButtonView_ptttalk, 128, 196);  /* PTT 按住说话按钮 */
+    FrameView_cloud->addView(ButtonView_taptalk, 128, 196);
     FrameView_cloud->addView(ButtonView_voice, 16, 88);
     FrameView_config_wm->addView(ListView_cfgwmlist, 24, 26);
     FrameView_config_wm->addView(ButtonView_yes17, 32, 87);
@@ -825,6 +845,8 @@ static void window_exit(void)
     ButtonView_automode.reset();
     ButtonView_pttmode.reset();
     ButtonView_ptttalk.reset();
+    ButtonView_tap2talk.reset();
+    ButtonView_taptalk.reset();
     LabelView_status_conn.reset();
     LabelView_status_conv.reset();
     InputMethodView_0.reset();
@@ -859,4 +881,6 @@ static void window_resume(void)
 }
 
 #endif //INCLUDE_MAIN_UI_H 
+
+
 

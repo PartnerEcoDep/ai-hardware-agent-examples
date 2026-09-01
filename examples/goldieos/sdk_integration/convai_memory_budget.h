@@ -32,9 +32,11 @@
 #define CONVAI_BUDGET_AUDIO_UPLINK_STACK_BYTES    0x2000
 #define CONVAI_BUDGET_AUDIO_DOWNLINK_STACK_BYTES  0x2000
 #define CONVAI_BUDGET_COMFORT_STACK_BYTES          0x800
+#define CONVAI_BUDGET_TAP_TIMEOUT_STACK_BYTES     0x1000  /* 4KB - watchdog only sleeps, minimal stack */
 
 /* TLS record buffers (consumed by the WS63 mbedTLS user config). */
 #define CONVAI_BUDGET_TLS_IN_CONTENT_BYTES         4096
 #define CONVAI_BUDGET_TLS_OUT_CONTENT_BYTES        4096
 
 #endif /* CONVAI_MEMORY_BUDGET_H */
+
