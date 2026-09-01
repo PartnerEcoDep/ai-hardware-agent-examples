@@ -62,11 +62,9 @@ static void func_dispatch_message_cb(const char *json_str)
     printf("FunctionCall Received (%d calls)\n", call_count);
     printf("========================================\n");
 
-    /* Build the reply: a conversation.item.create with one
-     * function_call_output per call. */
-    cJSON *response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "type", "conversation.item.create");
-    cJSON *items = cJSON_AddArrayToObject(response, "items");
+    /* Build and send one conversation.item.create per function call result.
+     * Per OpenAI Realtime API, each event carries a single item. */
+    convai_engine_t engine = convai_bridge_get_engine();
 
     for (int i = 0; i < call_count; i++) {
         cJSON *call = cJSON_GetArrayItem(calls, i);
@@ -103,26 +101,27 @@ static void func_dispatch_message_cb(const char *json_str)
 
         if (args_json) cJSON_Delete(args_json);
 
+        cJSON *response = cJSON_CreateObject();
+        cJSON_AddStringToObject(response, "type", "conversation.item.create");
         cJSON *item = cJSON_CreateObject();
         cJSON_AddStringToObject(item, "type", "function_call_output");
         cJSON_AddStringToObject(item, "call_id", call_id ? call_id : "");
         cJSON_AddStringToObject(item, "output", output_str);
-        cJSON_AddItemToArray(items, item);
+        cJSON_AddItemToObject(response, "item", item);
+
+        char *response_str = cJSON_PrintUnformatted(response);
+        if (response_str) {
+            if (engine) {
+                printf("[FuncDispatch] Sending Function call result: %s\n", response_str);
+                convai_send_message(engine, response_str, strlen(response_str), NULL);
+            }
+            cJSON_free(response_str);
+        }
+        cJSON_Delete(response);
     }
 
     printf("\n");
     printf("========================================\n");
-
-    char *response_str = cJSON_PrintUnformatted(response);
-    if (response_str) {
-        convai_engine_t engine = convai_bridge_get_engine();
-        if (engine) {
-            printf("[FuncDispatch] Sending function call result: %s\n", response_str);
-            convai_send_message(engine, response_str, strlen(response_str), NULL);
-        }
-        cJSON_free(response_str);
-    }
-    cJSON_Delete(response);
     cJSON_Delete(root);
 }
 

@@ -46,7 +46,7 @@ static void send_comfort_message(void)
     printf("[convai_comfort] RESPONSE TIMEOUT - sending comfort message\n");
     char json[CONVAI_BUDGET_COMFORT_JSON_BYTES];
     int n = snprintf(json, sizeof(json),
-        "{\"type\":\"conversation.item.create\",\"items\":[{\"type\":\"ExternalTextToSpeech\",\"text\":\"%s\"}]}",
+        "{\"type\":\"conversation.item.create\",\"item\":{\"type\":\"ExternalTextToSpeech\",\"text\":\"%s\"}}",
         COMFORT_TEXT);
 
     if (n < 0 || (size_t)n >= sizeof(json)) {
