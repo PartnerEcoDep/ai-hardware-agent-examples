@@ -102,12 +102,12 @@ static void func_dispatch_message_cb(const char *json_str)
         if (args_json) cJSON_Delete(args_json);
 
         cJSON *response = cJSON_CreateObject();
-        cJSON_AddStringToObject(response, "type", "conversation.item.create")
+        cJSON_AddStringToObject(response, "type", "conversation.item.create");
         cJSON *item = cJSON_CreateObject();
         cJSON_AddStringToObject(item, "type", "function_call_output");
         cJSON_AddStringToObject(item, "call_id", call_id ? call_id : "");
         cJSON_AddStringToObject(item, "output", output_str);
-        cJSON_AddItemToArray(response, "item", item);
+        cJSON_AddItemToObject(response, "item", item);
 
         char *response_str = cJSON_PrintUnformatted(response);
         if (response_str) {
