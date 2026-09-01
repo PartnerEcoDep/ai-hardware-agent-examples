@@ -11,7 +11,8 @@
  *   - No PTT / audio-mode switching (continuous mic capture).
  *   - Downlink uses a ring buffer + playback task to smooth network jitter;
  *     INTERRUPTED flushes queued TTS so barge-in stops the speaker quickly.
- *   - No comfort timeout, no function-call dispatch, no service_manager.
+ *   - No comfort timeout or service_manager. Function-call dispatch lives in
+ *     the separate convai_func_dispatch / convai_func_handlers modules.
  *   - No convai_bridge_set_audio_source (mic is the only source).
  *   - convai_bridge_set_startup_config feeds the voice selector's config.
  */

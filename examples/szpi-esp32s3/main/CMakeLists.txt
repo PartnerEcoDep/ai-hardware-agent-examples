@@ -52,6 +52,8 @@ idf_component_register(
         "sdk/sdk_init.c"
         "sdk/convai_bridge.c"
         "sdk/convai_bridge_defaults.c"
+        "sdk/convai_func_dispatch.c"
+        "sdk/convai_func_handlers.c"
         "sdk/convai_config_file.c"
         "sdk/convai_codec_g711a.c"
 
@@ -114,6 +116,7 @@ idf_component_register(
         esp_lvgl_port           # LVGL ESP-IDF 移植层
         mbedtls
         lwip
+        cjson
         esp-wifi-connect
         convai_sdk              # 真实 SDK（libconvai_sdk.a）
 )
