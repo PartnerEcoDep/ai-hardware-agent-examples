@@ -145,13 +145,11 @@ handler 只需设置 `*output_str`，主循环自动构建完整的回复 JSON�
 ```json
 {
   "type": "conversation.item.create",
-  "items": [
-    {
+  "item": {
       "type": "function_call_output",
       "call_id": "<自动填入>",
       "output": "<*output_str 指向的内容>"
     }
-  ]
 }
 ```
 
@@ -363,13 +361,11 @@ static bool handle_emotion(const char *call_id, cJSON *args_json,
 ```json
 {
   "type": "conversation.item.create",
-  "items": [
-    {
+  "item": {
       "type": "function_call_output",
       "call_id": "call_xxx",
       "output": "<handler 设置的 *output_str>"
     }
-  ]
 }
 ```
 
