@@ -221,6 +221,7 @@ CMake 3.21 或更高版本。两端均提供 `Release`、`Debug` 和
 
 | 文档                                                                 | 说明                                                              |
 | -------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [SDK 接入开发指南（以 ESP32-S3 为例）](examples/szpi-esp32s3/docs/esp32s3_sdk接入开发指南.md) | 如何接入 SDK 从零实现一个新 demo：平台适配层、桥接层、音频管线与接入 Checklist |
 | [Function Call 开发最佳实践](examples/goldieos/docs/function_call.md) | GoldieOS：如何新增 function call handler、参数解析规范、JSON 协议 |
 
 ---
