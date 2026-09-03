@@ -193,7 +193,8 @@ static void on_sdk_event(convai_engine_t engine, convai_event_t *event,
       g_started = 0;
       g_status = CONVAI_STATUS_IDLE;
       if(g_status_cb) g_status_cb(g_status);
-      ESP_LOGI(TAG, "DISCONNECTED: local state reset (sent=%u dropped=%u)",
+      ESP_LOGW(TAG, "DISCONNECTED: %s (sent=%u dropped=%u)",
+                info[0] ? info : "unknown",
                 (unsigned)s_frames_sent, (unsigned)s_frames_dropped);
 
       break;
@@ -617,7 +618,7 @@ int convai_bridge_start(void) {
 
   int ret = convai_start(g_engine, &opt);
   if (ret != CONVAI_OK) {
-    ESP_LOGE(TAG, "convai_start failed: %d", ret);
+    ESP_LOGE(TAG, "convai_start failed: %s", convai_err_2_str(ret));
     return ret;
   }
 
@@ -643,7 +644,7 @@ int convai_bridge_stop(void) {
   if (g_engine) {
     int ret = convai_stop(g_engine);
     if (ret != CONVAI_OK) {
-      ESP_LOGE(TAG, "convai_stop failed: %d", ret);
+      ESP_LOGE(TAG, "convai_stop failed: %s", convai_err_2_str(ret));
       return ret;
     }
   }
