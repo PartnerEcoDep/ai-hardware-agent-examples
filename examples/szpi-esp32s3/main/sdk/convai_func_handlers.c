@@ -13,6 +13,7 @@
 #include "esp_log.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "func_handlers";
@@ -103,8 +104,6 @@ static bool handle_get_weather(const char *call_id, cJSON *args_json,
                                char *output_buf, size_t buf_size,
                                const char **output_str) {
   (void)call_id;
-  (void)output_buf;
-  (void)buf_size;
 
   const char *location = get_required_string(args_json, "location");
   if (location == NULL) {
@@ -113,7 +112,15 @@ static bool handle_get_weather(const char *call_id, cJSON *args_json,
     return true;
   }
 
-  ESP_LOGI(TAG, "get_weather parsed: location=%s", location);
+  ESP_LOGI(TAG, "get_weather: location=%s", location);
+
+  /* 回显 location 并返回占位"晴天"; 真实天气由 AI 在对话中给出.
+   * location 直接拼入 JSON, 城市名通常无转义字符; 若放开为任意输入需做转义. */
+  snprintf(output_buf, buf_size,
+           "{\"result\":\"success\",\"message\":\"晴天\","
+           "\"location\":\"%s\"}",
+           location);
+  *output_str = output_buf;
   return true;
 }
 
