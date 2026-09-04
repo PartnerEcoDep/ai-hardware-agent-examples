@@ -20,7 +20,7 @@
 #include <string.h>
 
 /* ---- config ---- */
-#define RESPONSE_TIMEOUT_MS     20000
+#define RESPONSE_TIMEOUT_MS     10000
 #define COMFORT_TEXT            "别着急，我正在想呢"
 
 /* ---- internal state ---- */
