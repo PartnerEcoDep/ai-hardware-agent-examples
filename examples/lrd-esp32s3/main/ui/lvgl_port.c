@@ -384,8 +384,6 @@ int lvgl_port_touch_init(i2c_master_bus_handle_t i2c_bus)
                  esp_err_to_name(ret));
         return -1;
     }
-    ESP_LOGI(TAG, "CST836U detected: module_id=0x%02X fw_ver=0x%02X",
-             mod, fw);
 
     /* 芯片探测 + 读固件版本: 确认触摸芯片真的在 I2C 总线上响应 */
     uint8_t fw = 0, mod = 0;
