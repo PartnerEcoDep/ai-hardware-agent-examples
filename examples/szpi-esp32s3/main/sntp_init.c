@@ -18,7 +18,7 @@ void sntp_init_sync(void) {
   tzset();
 
   esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-  esp_sntp_setservername(0, "pool.ntp.org");
+  esp_sntp_setservername(0, "203.107.6.88");
   esp_sntp_setservername(1, "ntp.aliyun.com");
   esp_sntp_init();
 
