@@ -1,0 +1,82 @@
+/**
+ * @file ai_chat_ui.h
+ * @brief AI Chat UI - Voice Assistant (LVGL 9.x)
+ *
+ * Layout (320x240):
+ *   [0..40]    status bar: dot + text / WiFi icon
+ *   [50..170]  center voice orb (5 states)
+ *   [180..195] state label (16px, centered)
+ *   [200..220] hint label  (16px, centered)
+ */
+#ifndef AI_CHAT_UI_H
+#define AI_CHAT_UI_H
+
+#include <stdbool.h>
+#include <stdint.h>
+#include "convai_event.h"
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum {
+  CHAT_IDLE = 0,
+  CHAT_LISTENING,
+  CHAT_THINKING,
+  CHAT_SPEAKING,
+  CHAT_INTERRUPTED,
+  CHAT_VOICE_SELECT,
+  CHAT_DISCONNECTED,
+} chat_state_t;
+
+typedef chat_state_t voice_state_t;
+
+#define STATE_IDLE         CHAT_IDLE
+#define STATE_LISTENING    CHAT_LISTENING
+#define STATE_THINKING     CHAT_THINKING
+#define STATE_SPEAKING     CHAT_SPEAKING
+#define STATE_INTERRUPTED  CHAT_INTERRUPTED
+#define STATE_VOICE_SELECT CHAT_VOICE_SELECT
+#define STATE_DISCONNECTED CHAT_DISCONNECTED
+
+esp_err_t ai_chat_ui_init(void);
+void ai_chat_ui_tick(void);
+
+/* Panel interface used by the UI panel factory. */
+void ai_chat_ui_show(void);
+void ai_chat_ui_hide(void);
+voice_state_t ai_chat_ui_get_state(void);
+void ai_chat_ui_set_state(chat_state_t state);
+/* 由 lvgl_task 在持有 LVGL 锁时调用: 应用 SDK 线程因锁竞争未及时应用的
+ * 最新状态 (set_state 非阻塞化后的兜底路径). */
+void ai_chat_ui_apply_pending(void);
+void ai_chat_ui_set_network(bool online);
+void ai_chat_ui_set_connection(const char *ssid, const char *ip,
+                               bool online);
+/* Cloud-side connection state, driven by SDK events (on_convai_event). */
+void ai_chat_ui_set_cloud(bool connected);
+/* convai_bridge_on_event handler — wired up in ai_chat_ui_init(). */
+void ai_chat_ui_on_cloud_event(convai_event_code_e code, const char *info);
+void ai_chat_ui_update_volume(uint8_t level);
+/* Hardware playback volume controls (persisted by audio_init). */
+void ai_chat_ui_adjust_hw_volume(int8_t delta);
+void ai_chat_ui_sync_hw_volume(void);
+
+/* touch indicator — red dot at the touch point (coord text removed) */
+void ai_chat_ui_touch_indicator(int x, int y);
+void ai_chat_ui_touch_indicator_hide(void);
+
+void ai_chat_ui_touch_swipe(int x, int y, bool pressed);
+
+/* legacy no-op stubs */
+void ai_chat_ui_add_message(const char *text, bool is_user);
+void ai_chat_ui_show_voice_selector(bool show);
+void ai_chat_ui_voice_select_next(void);
+int  ai_chat_ui_voice_select_get(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  /* AI_CHAT_UI_H */
