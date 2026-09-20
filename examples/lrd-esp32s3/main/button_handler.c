@@ -15,7 +15,9 @@
 
 #include "button_handler.h"
 #include "board_lckfb_szpi.h"
+#if CONFIG_CONVAI_ENABLE
 #include "convai_bridge.h"
+#endif
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -51,6 +53,7 @@ void button_handler_poll(void) {
   } else if (!down && s_btn_was_down) {
     /* Release edge: short press -> toggle the SDK session. */
     if ((now - s_btn_press_tick) * portTICK_PERIOD_MS >= SHORT_MIN_MS) {
+#if CONFIG_CONVAI_ENABLE
       if (convai_bridge_is_started()) {
         ESP_LOGI(TAG, "Press -> convai_bridge_stop");
         convai_bridge_stop();
@@ -60,6 +63,9 @@ void button_handler_poll(void) {
           ESP_LOGE(TAG, "convai_bridge_start failed");
         }
       }
+#else
+      ESP_LOGI(TAG, "button pressed (SDK disabled, no-op)");
+#endif
     }
   }
 

@@ -377,6 +377,18 @@ int convai_bridge_get_downlink_stats(unsigned int *dropped_bytes)
     return bridge_downlink_get_stats(dropped_bytes);
 }
 
+void convai_bridge_mem_report(void)
+{
+    /* SDK-layer budget (engine + WS + TLS + IO stack) */
+    convai_mem_report();
+    /* Bridge-owned counters */
+    unsigned int sent = 0, dropped = 0, dl_dropped = 0;
+    (void)convai_bridge_get_uplink_stats(&sent, &dropped);
+    (void)convai_bridge_get_downlink_stats(&dl_dropped);
+    printf("[convai_bridge] uplink: sent=%u dropped=%u, downlink dropped_bytes=%u\n",
+           sent, dropped, dl_dropped);
+}
+
 int convai_bridge_send_audio(const uint8_t *data, size_t len,
                              const convai_audio_frame_info_t *info)
 {

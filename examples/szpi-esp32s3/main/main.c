@@ -17,7 +17,6 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_lcd_panel_ops.h"
 
@@ -29,14 +28,13 @@
 #include "sntp_init.h"
 #include "sdk_init.h"
 #include "button_handler.h"
+#include "mem_monitor.h"
 #include "lvgl_port.h"
 #include "ai_chat_ui.h"
 #include "wifi_prov_ui.h"
 #include "wifi_provisioning.h"
 #include "voice_factory.h"
 #include "ui_panel.h"
-
-static const char *TAG = "main";
 
 void app_main(void) {
   printf("\n=== ESP32-S3 Step-by-step Init ===\n\n");
@@ -122,23 +120,19 @@ void app_main(void) {
 
   app_state_set(APP_STATE_RUNNING);
 
+  /* Periodic runtime memory logging (independent low-prio task, 10s).
+   * Replaces the inline heartbeat below: heap + stack + bridge counters. */
+  mem_monitor_start();
+
 skip_hw:
   button_handler_init();
   printf("\n=== Init complete, press BOOT to start AI conversation ===\n");
   board_led_set(0);
 
-  static int s_hb_cnt = 0;
   while (1) {
     button_handler_poll();
     ai_chat_ui_tick();
     audio_volume_flush();
-
-    if (++s_hb_cnt >= 200) { /* ~10s */
-      s_hb_cnt = 0;
-      ESP_LOGI(TAG, "heartbeat: free_heap=%u, min_free=%u",
-               (unsigned)esp_get_free_heap_size(),
-               (unsigned)esp_get_minimum_free_heap_size());
-    }
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 }

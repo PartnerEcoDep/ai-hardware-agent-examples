@@ -111,7 +111,7 @@ typedef struct {
   convai_thread_t *thread;
 } esp32_thread_args_t;
 
-#define THREAD_DEFAULT_STACK     4096
+#define THREAD_DEFAULT_STACK     8192  /* 4096 处理大 WS payload(5.4KB) 时栈溢出踩坏堆, 导致 malloc 失败断连 */
 #define THREAD_DEFAULT_PRIORITY  (tskIDLE_PRIORITY + 10) //高于LVGL(7),低于lwIP(18)/WIFI(23)
 #define THREAD_DEFAULT_NAME      "convai"
 

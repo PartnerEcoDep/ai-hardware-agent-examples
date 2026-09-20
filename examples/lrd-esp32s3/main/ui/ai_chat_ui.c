@@ -181,6 +181,7 @@ void create_bottom_text(void) {
 
 static void on_talk_button_click(lv_event_t *e) {
   (void)e;
+#if CONFIG_CONVAI_ENABLE
   if (convai_bridge_is_started()) {
     ESP_LOGI(TAG, "talk button -> convai_bridge_stop");
     convai_bridge_stop();
@@ -194,6 +195,9 @@ static void on_talk_button_click(lv_event_t *e) {
     lv_label_set_text(ui.talk_button_label,
                       convai_bridge_is_started() ? "停止" : "说话");
   }
+#else
+  ESP_LOGI(TAG, "talk button pressed (SDK disabled, no-op)");
+#endif
 }
 
 void create_talk_button(void) {
@@ -266,7 +270,9 @@ esp_err_t ai_chat_ui_init(void) {
 
   lvgl_port_unlock();
 
+#if CONFIG_CONVAI_ENABLE
   convai_bridge_on_event(ai_chat_ui_on_cloud_event);
+#endif
 
   ESP_LOGI(TAG, "UI ready");
   return ESP_OK;
@@ -283,7 +289,11 @@ static void ai_chat_ui_update_stats(void) {
 
   unsigned int sent = 0;
   unsigned int dropped = 0;
+#if CONFIG_CONVAI_ENABLE
   int have_stats = (convai_bridge_get_uplink_stats(&sent, &dropped) == 0);
+#else
+  int have_stats = 0;
+#endif
 
   if (ui.ram_label != NULL) {
     uint32_t total = heap_caps_get_total_size(MALLOC_CAP_8BIT);

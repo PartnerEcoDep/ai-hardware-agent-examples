@@ -17,7 +17,6 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_lcd_panel_ops.h"
 
@@ -28,14 +27,16 @@
 #include "audio_init.h"
 #include "sntp_init.h"
 #include "sdk_init.h"
+#include "mem_monitor.h"
+#if CONFIG_CONVAI_ENABLE
+#include "convai_bridge.h"
+#endif
 #include "lvgl_port.h"
 #include "ai_chat_ui.h"
 #include "wifi_prov_ui.h"
 #include "wifi_provisioning.h"
 #include "voice_factory.h"
 #include "ui_panel.h"
-
-static const char *TAG = "main";
 
 void app_main(void) {
   printf("\n=== ESP32-S3 Step-by-step Init ===\n\n");
@@ -110,32 +111,36 @@ void app_main(void) {
   fflush(stdout);
 
   /* 8. Platform HAL + SDK engine (no session start until screen button) */
+#if CONFIG_CONVAI_ENABLE
   printf("[8/8] HAL register + SDK engine...\n");
   fflush(stdout);
   if (sdk_init() != ESP_OK) {
     printf("[8/8] SDK init FAILED\n");
   } else {
     printf("[8/8] SDK engine ready (idle, awaiting screen button)\n");
+    /* Memory budget verification: print SDK-layer + bridge budget table.
+     * Use this output to confirm the subsystem fits the 100KB target. */
+    convai_bridge_mem_report();
   }
   fflush(stdout);
+#else
+  printf("[8/8] SDK disabled (CONFIG_CONVAI_ENABLE=n) — empty baseline build\n");
+  fflush(stdout);
+#endif
 
   app_state_set(APP_STATE_RUNNING);
+
+  /* Periodic runtime memory logging (independent low-prio task, 10s).
+   * Replaces the inline heartbeat below: heap + stack + bridge counters. */
+  mem_monitor_start();
 
 skip_hw:
   printf("\n=== Init complete, tap screen button to start AI conversation ===\n");
   board_led_set(0);
 
-  static int s_hb_cnt = 0;
   while (1) {
     ai_chat_ui_tick();
     audio_volume_flush();
-
-    if (++s_hb_cnt >= 200) { /* ~10s */
-      s_hb_cnt = 0;
-      ESP_LOGI(TAG, "heartbeat: free_heap=%u, min_free=%u",
-               (unsigned)esp_get_free_heap_size(),
-               (unsigned)esp_get_minimum_free_heap_size());
-    }
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 }

@@ -36,6 +36,7 @@ idf_component_register(
         "app_state.c"
         "sntp_init.c"
         "button_handler.c"
+        "mem_monitor.c"
 
         # ---- 板级硬件 (board/) ----
         "board/board_init.c"
@@ -49,20 +50,22 @@ idf_component_register(
         "audio/audio_init.c"
 
         # ---- SDK 对接 (sdk/) ----
-        "sdk/sdk_init.c"
-        "sdk/convai_bridge.c"
-        "sdk/convai_bridge_defaults.c"
-        "sdk/convai_func_dispatch.c"
-        "sdk/convai_func_handlers.c"
-        "sdk/convai_config_file.c"
-        "sdk/convai_codec_g711a.c"
+        # Gated by CONFIG_CONVAI_ENABLE: disabling it builds the "empty"
+        # firmware (no ConvAI SDK) for memory-diff baseline measurement.
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/sdk_init.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/convai_bridge.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/convai_bridge_defaults.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/convai_func_dispatch.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/convai_func_handlers.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/convai_config_file.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/convai_codec_g711a.c>
 
         # ---- SDK 平台 HAL (sdk/platform/) ----
-        "sdk/platform/convai_platform_esp32.c"
-        "sdk/platform/esp32_osal.c"
-        "sdk/platform/esp32_netal.c"
-        "sdk/platform/esp32_tlsal.c"
-        "sdk/platform/esp32_misc.c"
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/platform/convai_platform_esp32.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/platform/esp32_osal.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/platform/esp32_netal.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/platform/esp32_tlsal.c>
+        $<$<BOOL:${CONFIG_CONVAI_ENABLE}>:sdk/platform/esp32_misc.c>
 
         # ---- 网络配网 (wifi/) ----
         "wifi/wifi_provisioning.cpp"
@@ -118,7 +121,11 @@ idf_component_register(
         lwip
         cjson
         esp-wifi-connect
-        convai_sdk              # 真实 SDK（libconvai_sdk.a）
 )
+
+# SDK 组件依赖（仅 CONFIG_CONVAI_ENABLE=y 时）
+if(CONFIG_CONVAI_ENABLE)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE convai_sdk)
+endif()
 
 idf_build_set_property(LINK_OPTIONS "-Wl,--allow-multiple-definition" APPEND)
