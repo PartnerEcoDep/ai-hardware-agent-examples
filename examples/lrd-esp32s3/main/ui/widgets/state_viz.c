@@ -393,9 +393,14 @@ static volatile bool s_voice_applying = false;
 
 static void voice_apply_task(void *arg) {
   int voice_id = (int)(intptr_t)arg;
+#if CONFIG_CONVAI_ENABLE
   if (voice_factory_select(convai_bridge_get_engine(), voice_id) != 0) {
     ESP_LOGE(TAG, "apply voice failed (id=%d)", voice_id);
   }
+#else
+  (void)voice_id;
+  ESP_LOGI(TAG, "voice apply (SDK disabled, no-op)");
+#endif
   s_voice_applying = false;
   vTaskDelete(NULL);
 }

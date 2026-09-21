@@ -394,15 +394,20 @@ static void on_message(convai_engine_t engine, const void *data, size_t len,
                        const convai_message_info_t *info, void *user_data) {
   (void)engine; (void)info; (void)user_data;
   /* The SDK only delivers a non-NULL pointer + length for the lifetime of
-   * this callback, so copy out if a registered callback needs it past. */
+   * this callback, so copy out if a registered callback needs it past.
+   * Static buffer instead of per-message malloc: SDK inbound text frames are
+   * capped at 1024 (SDK CONVAI_CORE_DUP_BUF_SIZE). */
   if (g_message_cb) {
-    char *copy = (char *)malloc(len + 1);
-    if (copy != NULL) {
-      memcpy(copy, data, len);
-      copy[len] = '\0';
-      g_message_cb(copy);
-      free(copy);
+    enum { MSG_COPY_MAX = 1024 };
+    static char s_msg_copy[MSG_COPY_MAX];
+    if (len >= sizeof(s_msg_copy)) {
+      ESP_LOGW(TAG, "message too large: len=%u (max=%u), dropped",
+               (unsigned)len, (unsigned)sizeof(s_msg_copy));
+      return;
     }
+    memcpy(s_msg_copy, data, len);
+    s_msg_copy[len] = '\0';
+    g_message_cb(s_msg_copy);
   } else {
     ESP_LOGI(TAG, "message: %.*s", (int)len, (const char *)data);
   }
@@ -443,8 +448,16 @@ static uint8_t compute_audio_level(const uint8_t *g711a, size_t n) {
 
 /* 单次采集缓冲: 20ms @ 8kHz TDM 4 时隙 16-bit PCM。
  * 每帧 4 样本 (slot0=MIC1, slot1=MIC3 回采, slot2=MIC2, slot3=MIC4) × 2 字节。
- * 用 4 slot 保证 MCLK_256 整数分频 (256/64=4), 时钟正常 RX 才有数据。 */
+ * 用 4 slot 保证 MCLK_256 整数分频 (256/64=4), 时钟正常 RX 才有数据。
+ * 三块缓冲全部文件级 static（消灭每次任务启动的 malloc/free，防堆碎片化）：
+ *   buf        = TDM 4 时隙原始数据 1280B
+ *   planar_buf = 2 通道 8k 平面 PCM 640B（L=MIC2 前 R=MIC3 后）
+ *   g711_buf   = G.711A 编码输出 ≤ planar_cap */
 #define CAPTURE_BUF_SIZE (AUDIO_SAMPLE_RATE * 4 * 2 / 50)
+#define CAPTURE_PLANAR_BYTES (AUDIO_SAMPLE_RATE * 2 * 2 / 50)
+static uint8_t  s_capture_buf[CAPTURE_BUF_SIZE];
+static uint8_t  s_capture_planar[CAPTURE_PLANAR_BYTES];
+static uint8_t  s_capture_g711[CAPTURE_PLANAR_BYTES];
 
 static void audio_capture_task(void *arg) {
   (void)arg;
@@ -455,32 +468,11 @@ static void audio_capture_task(void *arg) {
     vTaskDeleteWithCaps(NULL);
     return;
   }
-  uint8_t *buf = (uint8_t *)malloc(CAPTURE_BUF_SIZE);   /* TDM 4 时隙原始数据 */
-  if (buf == NULL) {
-    s_capture_running = 0;
-    vTaskDeleteWithCaps(NULL);
-    return;
-  }
-  /* planar PCM 缓冲 (L 前 R 后): 只保留 slot0(MIC1)+slot1(MIC3) 两路,
-   * 8k 硬件采集即 8k, 无需再降采样。
-   * 大小 = 2 通道 8k = AUDIO_SAMPLE_RATE*2*2/50 字节。 */
-  size_t planar_cap = (size_t)(AUDIO_SAMPLE_RATE * 2 * 2 / 50);
-  uint8_t *planar_buf = (uint8_t *)malloc(planar_cap);
-  if (planar_buf == NULL) {
-    free(buf);
-    s_capture_running = 0;
-    vTaskDeleteWithCaps(NULL);
-    return;
-  }
-  /* G.711A 编码输出缓冲: 2 通道 8k 压缩后 ≤ planar_cap。 */
-  uint8_t *g711_buf = (uint8_t *)malloc(planar_cap);
-  if (g711_buf == NULL) {
-    free(planar_buf);
-    free(buf);
-    s_capture_running = 0;
-    vTaskDeleteWithCaps(NULL);
-    return;
-  }
+  /* 文件级 static 缓冲（见文件头定义），无堆分配 */
+  uint8_t *buf       = s_capture_buf;
+  uint8_t *planar_buf = s_capture_planar;
+  uint8_t *g711_buf  = s_capture_g711;
+  size_t planar_cap  = (size_t)CAPTURE_PLANAR_BYTES;
 
   int hb_cnt = 0;
   int rx_empty_cnt = 0;
@@ -609,9 +601,7 @@ static void audio_capture_task(void *arg) {
                (unsigned)s_frames_sent, (unsigned)s_frames_dropped);
     }
   }
-  free(g711_buf);
-  free(planar_buf);
-  free(buf);
+  /* 静态缓冲无需释放 */
   s_capture_running = 0;
   ESP_LOGI(TAG, "capture task exited (sent=%u dropped=%u)",
            (unsigned)s_frames_sent, (unsigned)s_frames_dropped);
@@ -773,6 +763,21 @@ int convai_bridge_get_uplink_stats(unsigned int *frames_sent,
   return 0;
 }
 
+int convai_bridge_get_runtime_stats(unsigned int *frames_sent,
+                                    unsigned int *frames_dropped,
+                                    unsigned int *play_dropped,
+                                    convai_status_e *status) {
+  int rc = 0;
+  if (frames_sent != NULL)    *frames_sent    = s_frames_sent;
+  if (frames_dropped != NULL) *frames_dropped = s_frames_dropped;
+  if (play_dropped != NULL)   *play_dropped   = (unsigned int)s_playback_dropped;
+  if (status != NULL)         *status         = g_status;
+  if (s_frames_sent == 0 && s_frames_dropped == 0 && !s_capture_running) {
+    rc = -1; /* capture never ran; counters are still valid (0) */
+  }
+  return rc;
+}
+
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }
@@ -799,4 +804,18 @@ void convai_bridge_set_device_name(const char *name) {
   strncpy(g_device_name, name, sizeof(g_device_name) - 1);
   g_device_name[sizeof(g_device_name) - 1] = '\0';
   ESP_LOGI(TAG, "device name set: %s", g_device_name);
+}
+
+void convai_bridge_mem_report(void) {
+  /* SDK-layer budget (engine + WS + TLS + IO stack) */
+  convai_mem_report();
+  /* Bridge-owned counters + heap watermarks */
+  unsigned int sent = 0, dropped = 0;
+  convai_bridge_get_uplink_stats(&sent, &dropped);
+  ESP_LOGI(TAG, "=== bridge report ===");
+  ESP_LOGI(TAG, "  uplink: sent=%u dropped=%u", sent, dropped);
+  ESP_LOGI(TAG, "  playback: ring_dropped=%u", (unsigned)s_playback_dropped);
+  ESP_LOGI(TAG, "  free_heap=%u min_free_heap=%u",
+           (unsigned)esp_get_free_heap_size(),
+           (unsigned)esp_get_minimum_free_heap_size());
 }

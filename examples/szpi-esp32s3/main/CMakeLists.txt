@@ -36,6 +36,7 @@ idf_component_register(
         "app_state.c"
         "sntp_init.c"
         "button_handler.c"
+        "mem_monitor.c"
 
         # ---- 板级硬件 (board/) ----
         "board/board_init.c"

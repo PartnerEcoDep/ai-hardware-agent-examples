@@ -108,10 +108,12 @@ int voice_config_init(void) {
 
     /* 同步到 bridge 的 startup config, 确保引擎启动时用的是 NVS 保存的音色;
      * 否则 g_startup_config 为空, 引擎会回退到硬编码默认音色, 与 UI 显示不一致 */
+#if CONFIG_CONVAI_ENABLE
     char json[512];
     if (voice_config_build_json(json, sizeof(json), DEFAULT_SYSTEM_MESSAGE) > 0) {
         convai_bridge_set_startup_config(json);
     }
+#endif
 
     return s_voice_id;
 }
@@ -140,6 +142,7 @@ int voice_config_set(convai_engine_t engine, int voice_id) {
         return -1;
     }
 
+#if CONFIG_CONVAI_ENABLE
     /* 参考 goldieos: 新配置总是先存到 bridge, 下次 start() 时使用 */
     convai_bridge_set_startup_config(json);
 
@@ -156,6 +159,11 @@ int voice_config_set(convai_engine_t engine, int voice_id) {
         s_voice_id = old_id; /* 回滚, 与 goldieos restore_ai_config 一致 */
         return -1;
     }
+#else
+    /* 空载固件 (CONFIG_CONVAI_ENABLE=n): 无 SDK, 仅本地保存 */
+    (void)engine;
+    printf("[%s] SDK disabled, voice config saved locally only\n", TAG);
+#endif
 
     printf("[%s] convai_update OK\n", TAG);
 

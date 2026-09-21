@@ -678,6 +678,21 @@ int convai_bridge_get_uplink_stats(unsigned int *frames_sent,
   return 0;
 }
 
+int convai_bridge_get_runtime_stats(unsigned int *frames_sent,
+                                    unsigned int *frames_dropped,
+                                    unsigned int *play_dropped,
+                                    convai_status_e *status) {
+  int rc = 0;
+  if (frames_sent != NULL)    *frames_sent    = s_frames_sent;
+  if (frames_dropped != NULL) *frames_dropped = s_frames_dropped;
+  if (play_dropped != NULL)   *play_dropped   = (unsigned int)s_playback_dropped;
+  if (status != NULL)         *status         = g_status;
+  if (s_frames_sent == 0 && s_frames_dropped == 0 && !s_capture_running) {
+    rc = -1; /* capture never ran; counters are still valid (0) */
+  }
+  return rc;
+}
+
 void convai_bridge_on_status(convai_bridge_status_cb cb)   { g_status_cb  = cb; }
 void convai_bridge_on_event(convai_bridge_event_cb cb)     { g_event_cb   = cb; }
 void convai_bridge_on_message(convai_bridge_message_cb cb) { g_message_cb = cb; }

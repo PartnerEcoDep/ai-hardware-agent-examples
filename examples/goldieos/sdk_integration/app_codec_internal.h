@@ -16,6 +16,7 @@
 #ifndef APP_CODEC_INTERNAL_H
 #define APP_CODEC_INTERNAL_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -68,6 +69,13 @@ int app_codec_opus_encode(const int16_t *pcm, int samples,
                           uint8_t *out, int cap, int *out_len);
 int app_codec_opus_decode(const uint8_t *buf, int len,
                           int16_t *pcm, int cap, int *out_samples);
+
+/**
+ * Current heap bytes held by live Opus encoder/decoder instances.
+ * Uses opus_encoder_get_size()/opus_decoder_get_size() for precise
+ * accounting; returns 0 when Opus is disabled or nothing is allocated.
+ */
+size_t app_codec_opus_mem_usage(void);
 
 #ifdef __cplusplus
 }

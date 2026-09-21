@@ -49,39 +49,37 @@ static goldie_mutex s_opus_mutex;
 static int s_opus_mutex_initialized = 0;
 static unsigned int s_decode_diag_count = 0;
 
+size_t app_codec_opus_mem_usage(void)
+{
+    /* Precise accounting: opus_encoder_get_size/opus_decoder_get_size return
+     * the exact heap each instance occupies; multiply by instance count. */
+    size_t bytes = 0;
+    if (!s_opus_mutex_initialized) {
+        return 0;
+    }
+    goldie_mutex_lock(&s_opus_mutex);
+    if (s_enc) {
+        bytes += opus_encoder_get_size(1 /* channels */);
+    }
+    if (s_dec) {
+        bytes += opus_decoder_get_size(1 /* channels */);
+    }
+    goldie_mutex_unlock(&s_opus_mutex);
+    return bytes;
+}
+
 int app_codec_opus_init(void)
 {
-    int err;
-
+    /* Lazy loading: no OpusEncoder/OpusDecoder instance is created here.
+     * Half-duplex voice assistants typically only use one direction at a
+     * time (encode during record, decode during playback); instantiating
+     * both at init would pin ~33 KB of heap permanently.  The encoder and
+     * decoder are created on first encode/decode instead and freed
+     * symmetrically in deinit(). */
     if (!s_opus_mutex_initialized) {
         goldie_mutex_init(&s_opus_mutex);
         s_opus_mutex_initialized = 1;
     }
-
-    goldie_mutex_lock(&s_opus_mutex);
-
-    if (s_enc == NULL) {
-        s_enc = opus_encoder_create(OPUS_SAMPLE_RATE, 1 /* mono */,
-                                    OPUS_APPLICATION_RESTRICTED_CELT, &err);
-        if (err != OPUS_OK || s_enc == NULL) {
-            goldie_mutex_unlock(&s_opus_mutex);
-            return APP_CODEC_ERR_ENCODE;
-        }
-        opus_encoder_ctl(s_enc, OPUS_SET_BITRATE(OPUS_BITRATE));
-        opus_encoder_ctl(s_enc, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
-    }
-
-    if (s_dec == NULL) {
-        s_dec = opus_decoder_create(OPUS_SAMPLE_RATE, 1 /* mono */, &err);
-        if (err != OPUS_OK || s_dec == NULL) {
-            opus_encoder_destroy(s_enc);
-            s_enc = NULL;
-            goldie_mutex_unlock(&s_opus_mutex);
-            return APP_CODEC_ERR_DECODE;
-        }
-    }
-
-    goldie_mutex_unlock(&s_opus_mutex);
     return APP_CODEC_OK;
 }
 
@@ -101,12 +99,22 @@ void app_codec_opus_deinit(void)
 int app_codec_opus_encode(const int16_t *pcm, int samples,
                           uint8_t *out, int cap, int *out_len)
 {
+    int err;
+
     if (!s_opus_mutex_initialized) return APP_CODEC_ERR_NOT_INIT;
 
     goldie_mutex_lock(&s_opus_mutex);
     if (!s_enc) {
-        goldie_mutex_unlock(&s_opus_mutex);
-        return APP_CODEC_ERR_NOT_INIT;
+        /* Lazy create on first encode: only the encoder is allocated so a
+         * record-only session never pays for the decoder. */
+        s_enc = opus_encoder_create(OPUS_SAMPLE_RATE, 1 /* mono */,
+                                    OPUS_APPLICATION_RESTRICTED_CELT, &err);
+        if (err != OPUS_OK || s_enc == NULL) {
+            goldie_mutex_unlock(&s_opus_mutex);
+            return APP_CODEC_ERR_ENCODE;
+        }
+        opus_encoder_ctl(s_enc, OPUS_SET_BITRATE(OPUS_BITRATE));
+        opus_encoder_ctl(s_enc, OPUS_SET_COMPLEXITY(OPUS_COMPLEXITY));
     }
     int ret = opus_encode(s_enc, pcm, samples, out, (opus_int32)cap);
     goldie_mutex_unlock(&s_opus_mutex);
@@ -143,8 +151,14 @@ int app_codec_opus_decode(const uint8_t *buf, int len,
     goldie_mutex_lock(&s_opus_mutex);
 
     if (!s_dec) {
-        goldie_mutex_unlock(&s_opus_mutex);
-        return APP_CODEC_ERR_NOT_INIT;
+        /* Lazy create on first decode: a playback-only session never pays
+         * for the encoder. */
+        int err;
+        s_dec = opus_decoder_create(OPUS_SAMPLE_RATE, 1 /* mono */, &err);
+        if (err != OPUS_OK || s_dec == NULL) {
+            goldie_mutex_unlock(&s_opus_mutex);
+            return APP_CODEC_ERR_DECODE;
+        }
     }
 
     int ret = opus_decode(
@@ -194,6 +208,11 @@ int app_codec_opus_init(void)
 void app_codec_opus_deinit(void)
 {
     /* no-op */
+}
+
+size_t app_codec_opus_mem_usage(void)
+{
+    return 0;
 }
 
 int app_codec_opus_encode(const int16_t *pcm, int samples,

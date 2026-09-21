@@ -57,6 +57,18 @@ int  convai_bridge_is_started(void);
 int  convai_bridge_get_uplink_stats(unsigned int *frames_sent,
                                     unsigned int *frames_dropped);
 
+/** Snapshot of bridge runtime counters + session status, for periodic
+ *  monitoring (mirrors the runtime half of convai_bridge_mem_report()).
+ *  @param[out] frames_sent    total uplink frames enqueued (may be NULL).
+ *  @param[out] frames_dropped total uplink frames dropped (may be NULL).
+ *  @param[out] play_dropped   playback ring bytes dropped (may be NULL).
+ *  @param[out] status         current session status (may be NULL).
+ *  @return 0 on success, -1 if capture never ran (stats stay 0). */
+int  convai_bridge_get_runtime_stats(unsigned int *frames_sent,
+                                     unsigned int *frames_dropped,
+                                     unsigned int *play_dropped,
+                                     convai_status_e *status);
+
 /* ---- Callback types ---- */
 typedef void (*convai_bridge_status_cb)(convai_status_e status);
 typedef void (*convai_bridge_event_cb)(convai_event_code_e event_type,

@@ -70,6 +70,10 @@ int convai_bridge_get_uplink_stats(unsigned int *frames_sent,
  *  (CPU/scheduling), distinct from underrun (DMA runs dry, no drops).
  *  Returns 0 on success, -1 if no playback has run. */
 int convai_bridge_get_downlink_stats(unsigned int *dropped_bytes);
+
+/** Print the memory budget report (SDK layer + bridge counters) to the log.
+ *  Thin wrapper over convai_mem_report() plus bridge-owned stats. */
+void convai_bridge_mem_report(void);
 /** Opaque audio source handle (AudioService from goldieos). */
 typedef void convai_audio_source_t;
 
