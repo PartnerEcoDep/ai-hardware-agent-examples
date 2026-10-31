@@ -1,5 +1,0 @@
-source [find target/Cortex-M3-SWD/cortex_M3_target.cfg]
-adapter_nsrst_delay 500
-adapter_khz 4000
-init
-  

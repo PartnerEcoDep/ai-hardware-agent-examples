@@ -1,4 +1,0 @@
-#ifndef _INCLUDE_PRJ_CONFIG_
-#define _INCLUDE_PRJ_CONFIG_
-//#define LINUX_SIMULAOR_PLATFORM_
-#endif

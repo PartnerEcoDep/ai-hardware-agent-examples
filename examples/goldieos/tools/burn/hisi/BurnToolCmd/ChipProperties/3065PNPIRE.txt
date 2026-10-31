@@ -1,5 +1,0 @@
-[Chip]
-ChipType=0x40005
-
-[loader]
-LoadBurnAddress=0x2000000

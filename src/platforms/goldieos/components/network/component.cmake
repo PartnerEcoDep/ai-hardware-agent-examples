@@ -1,0 +1,28 @@
+function(goldieos_component_network target backend)
+    set(component_dir "${CMAKE_CURRENT_FUNCTION_LIST_DIR}")
+    target_sources(${target} PRIVATE "${component_dir}/${backend}/network.c")
+    if(backend STREQUAL "windows")
+        target_link_libraries(${target} PRIVATE wininet)
+        return()
+    endif()
+    target_sources(${target} PRIVATE
+        "${component_dir}/ws63/wifi_store.c"
+        "${component_dir}/ws63/dhcp_gateway.c"
+        "${component_dir}/ws63/portal_gateway.c")
+    # Embed the same pages as ESP-IDF; keep generated data in the build directory.
+    set(web_assets "${CMAKE_CURRENT_BINARY_DIR}/wifi_assets.c")
+    file(WRITE "${web_assets}" "/* Generated from ui/web; do not edit. */\n")
+    foreach(page IN ITEMS wifi_configuration wifi_configuration_done)
+        set(source "${UNIFIED_SOURCE_ROOT}/application/ui/web/${page}.html")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${source}")
+        file(READ "${source}" bytes HEX)
+        string(REGEX REPLACE "(..)" "0x\\1," bytes "${bytes}")
+        if(page STREQUAL "wifi_configuration")
+            set(symbol ws_wifi_html)
+        else()
+            set(symbol ws_wifi_done_html)
+        endif()
+        file(APPEND "${web_assets}" "const char ${symbol}[] = {${bytes}0};\n")
+    endforeach()
+    target_sources(${target} PRIVATE "${web_assets}")
+endfunction()
