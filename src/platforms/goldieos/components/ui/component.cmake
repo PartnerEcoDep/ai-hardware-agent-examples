@@ -1,0 +1,18 @@
+function(goldieos_component_ui target)
+    set(lvgl_archive "${app_root}/third_party/lvgl-9.5.0-source.tar.gz")
+    file(SHA256 "${lvgl_archive}" lvgl_sha)
+    if(NOT lvgl_sha STREQUAL "acf605dc3b67f030eb3bd3f34967ff5ac115264b82fc03799f45231664387d9f")
+        message(FATAL_ERROR "Unexpected LVGL source archive checksum")
+    endif()
+    set(lvgl_root "${CMAKE_CURRENT_BINARY_DIR}/deps/lvgl-9.5.0")
+    if(NOT EXISTS "${lvgl_root}/${lvgl_sha}.stamp")
+        file(ARCHIVE_EXTRACT INPUT "${lvgl_archive}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/deps")
+        file(WRITE "${lvgl_root}/${lvgl_sha}.stamp" "verified")
+    endif()
+    file(GLOB_RECURSE lvgl_sources "${lvgl_root}/src/*.c")
+    target_sources(${target} PRIVATE ${lvgl_sources}
+        "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ui.c" "${UNIFIED_SOURCE_ROOT}/application/ui/ai_lvgl.c")
+    target_include_directories(${target} BEFORE PRIVATE
+        "${lvgl_root}" "${CMAKE_CURRENT_FUNCTION_LIST_DIR}")
+    target_compile_definitions(${target} PRIVATE LV_CONF_INCLUDE_SIMPLE LV_KCONFIG_IGNORE)
+endfunction()

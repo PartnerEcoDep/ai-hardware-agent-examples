@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hoperun WS63 单板构建"
+  short_description: "从本地或在线准备 Windows 构建依赖，生成Hoperun WS63 单板程序"
+  default_prompt: "使用 $build-hoperun-ws63，按当前 unified-app 架构准备依赖并构建Hoperun WS63 单板程序。"

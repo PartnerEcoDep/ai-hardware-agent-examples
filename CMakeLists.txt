@@ -1,64 +1,20 @@
-cmake_minimum_required(VERSION 3.10)
-project(ai_hardware_agent_examples VERSION 26.8.0 LANGUAGES C CXX)
-
-# ====================================================================
-#  Global settings
-# ====================================================================
-
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
-
-# Enable compile warnings
-if(MSVC)
-    add_compile_options(/W3)
-else()
-    add_compile_options(-Wall -Wextra)
+cmake_minimum_required(VERSION 3.21)
+set(UNIFIED_APP_ROOT "${CMAKE_CURRENT_LIST_DIR}")
+set(UNIFIED_SOURCE_ROOT "${UNIFIED_APP_ROOT}/src")
+set(UNIFIED_TARGET "esp32s3" CACHE STRING "Build target")
+set_property(CACHE UNIFIED_TARGET PROPERTY STRINGS esp32s3 goldieos_ws63 goldieos_windows)
+if(DEFINED UNIFIED_CONFIGURED_TARGET AND NOT UNIFIED_CONFIGURED_TARGET STREQUAL UNIFIED_TARGET)
+    message(FATAL_ERROR "Use separate build directories for each UNIFIED_TARGET")
 endif()
-
-# ====================================================================
-#  Examples  (ws63 firmware / win simulator)
-# ====================================================================
-
-if(CONVAI_PLATFORM STREQUAL "ws63")
-    # ---- C Compile options (RISC-V specific) ----
-    add_compile_options(
-        -w
-        -march=rv32imfc
-        -mabi=ilp32f
-        --short-enums
-        -std=gnu99
-        -fasm
-        -fcommon
-        -Wall -Wextra
-        -Winit-self -Wpointer-arith -Wstrict-prototypes
-        -fno-strict-aliasing
-        -Os
-        -fno-unwind-tables
-        -ffreestanding
-        -fdata-sections -ffunction-sections
-        -nostdlib -pipe
-        -fno-tree-scev-cprop
-        -mpush-pop -msmall-data-limit=0 -fno-ipa-ra
-    )
-    if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
-        add_subdirectory(src)
-    endif()
-    add_subdirectory(examples/goldieos)
-elseif(CONVAI_PLATFORM STREQUAL "goldieos")
-    # ---- Windows simulator (native MinGW gcc/g++) ----
-    # Configure with:
-    #   cmake -G "MinGW Makefiles" -DCONVAI_PLATFORM=goldieos \
-    #         -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-    #         -DCMAKE_C_COMPILER_WORKS=1 -DCMAKE_CXX_COMPILER_WORKS=1 \
-    #         -DCMAKE_MAKE_PROGRAM=mingw32-make ..
-    message(STATUS "CONVAI_PLATFORM=goldieos: building Windows simulator (goldieos.exe)")
-    if(EXISTS ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt)
-        add_subdirectory(src)
-    endif()
-    add_subdirectory(examples/goldieos)
+set(UNIFIED_CONFIGURED_TARGET "${UNIFIED_TARGET}" CACHE INTERNAL "Configured target")
+if(UNIFIED_TARGET STREQUAL "esp32s3")
+    include("${UNIFIED_SOURCE_ROOT}/platforms/esp_idf/targets/esp32s3/project.cmake")
+    # Invoke here to retain the repository as IDF's project/configuration root.
+    project(${UNIFIED_PROJECT_NAME})
+elseif(UNIFIED_TARGET STREQUAL "goldieos_ws63")
+    include("${UNIFIED_SOURCE_ROOT}/platforms/goldieos/targets/ws63/CMakeLists.txt")
+elseif(UNIFIED_TARGET STREQUAL "goldieos_windows")
+    include("${UNIFIED_SOURCE_ROOT}/platforms/goldieos/targets/windows/CMakeLists.txt")
 else()
-    message(STATUS "CONVAI_PLATFORM not set or unsupported: '${CONVAI_PLATFORM}'. Supported platforms: ws63, win")
+    message(FATAL_ERROR "Unknown UNIFIED_TARGET: ${UNIFIED_TARGET}")
 endif()
-
-

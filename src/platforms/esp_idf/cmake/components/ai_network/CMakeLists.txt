@@ -1,0 +1,2 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../paths.cmake")
+idf_component_register(SRCS "${UNIFIED_SOURCE_ROOT}/application/services/network/ai_wifi_store.c" "${UNIFIED_SOURCE_ROOT}/application/services/network/ai_network_status.c" "${UNIFIED_SOURCE_ROOT}/application/services/network/ai_provision.c" "${UNIFIED_SOURCE_ROOT}/application/services/network/ai_portal.c" INCLUDE_DIRS "${UNIFIED_SOURCE_ROOT}/application/services/network/include")

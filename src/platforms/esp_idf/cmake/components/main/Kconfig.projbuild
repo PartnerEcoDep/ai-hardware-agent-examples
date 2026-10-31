@@ -1,0 +1,28 @@
+menu "Unified AI application"
+config AI_AGENT_ID
+    string "Agent ID"
+    default ""
+config AI_API_KEY
+    string "API key (takes priority over product credentials)"
+    default ""
+config AI_PRODUCT_ID
+    string "Product ID"
+    default ""
+config AI_PRODUCT_KEY
+    string "Product key"
+    default ""
+config AI_PRODUCT_SECRET
+    string "Product secret"
+    default ""
+config AI_SERVER_URL
+    string "WebSocket URL (empty uses SDK default)"
+    default ""
+config AI_SPEAKER_VOLUME
+    int "Speaker volume (%)"
+    range 0 100
+    default 70
+config AI_PLAYBACK_KB
+    int "Bounded G711A playback buffer in PSRAM (KiB)"
+    range 16 512
+    default 256
+endmenu

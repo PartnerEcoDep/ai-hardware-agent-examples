@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 设备配网</title>
+<style>
+body{font:16px system-ui,sans-serif;background:#f1f5f9;color:#172554;margin:0;padding:24px 16px}
+main{max-width:480px;margin:auto}section{background:white;border-radius:12px;padding:20px;margin:16px 0}
+h1{font-size:24px}h2{font-size:18px;margin-top:0}button,input{font:inherit;border-radius:8px;padding:10px}
+button{border:0;background:#1d4ed8;color:white;cursor:pointer;margin:4px 4px 4px 0}button:disabled{opacity:.5}
+input{box-sizing:border-box;width:100%;border:1px solid #cbd5e1;margin:8px 0 16px}
+.row{border-top:1px solid #e2e8f0;padding:10px 0;overflow-wrap:anywhere}.row button{font-size:14px}
+#status{min-height:24px;white-space:pre-wrap}small{color:#475569}label{display:block}
+</style>
+<main>
+<h1>AI 设备配网</h1><p>连接 2.4 GHz Wi-Fi。成功保存后，请退出配网返回 AI 对话。</p>
+<p id="status" role="status" aria-live="polite"></p>
+<section><h2>附近网络</h2><button id="scan">扫描网络</button><div id="networks"></div></section>
+<section><h2>连接网络</h2><form id="connect">
+<label for="ssid">网络名称</label><input id="ssid" required autocomplete="off">
+<label for="password">密码（开放网络留空）</label><input id="password" type="password" autocomplete="new-password">
+<button type="submit">连接并保存</button></form></section>
+<section><h2>已保存网络</h2><small>默认网络优先连接，最多保存 10 个网络。</small><div id="saved"></div></section>
+<button id="exit">退出配网</button>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let busy=false;
+async function api(url, options={}, timeout=65000) {
+  const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),timeout);
+  try {
+    let response;
+    try { response=await fetch(url,{...options,cache:'no-store',signal:controller.signal}); }
+    catch(e) { const error=Error('与设备的连接暂时中断，请确认手机仍连接 AI-Setup 热点');error.transport=true;throw error; }
+    if(!response.ok) throw Error('设备请求失败，请重试');
+    const data=await response.json();
+    if(data.success===false) { const error=Error(data.error||'操作失败，请检查网络和密码');error.device=true;throw error; }
+    return data;
+  } finally { clearTimeout(timer); }
+}
+async function connectNetwork(ssid,password) {
+  const request_id=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+  try { return await api('/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password,request_id})}); }
+  catch(e) {
+    if(!e.transport) throw e;
+    $('status').textContent='连接路由器时热点可能短暂中断，正在确认连接和保存结果…';
+    for(let attempt=0;attempt<5;attempt++) {
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      try { return await api('/connection/status?id='+encodeURIComponent(request_id),{},5000); }
+      catch(statusError) {
+        if(!statusError.transport) {
+          /* A matching device response is authoritative, including save failure. */
+          if(statusError.device) throw statusError;
+          break;
+        }
+      }
+    }
+    throw Error('暂时无法确认连接结果。请重新连接 AI-Setup 热点并查看设备状态；不要重复提交密码。');
+  }
+}
+async function action(task) {
+  if(busy) return;
+  busy=true; document.querySelectorAll('button').forEach(b=>b.disabled=true);
+  try { await task(); } catch(e) { $('status').textContent=e.name==='AbortError'?'设备响应超时，请重试':e.message; }
+  finally { busy=false; document.querySelectorAll('button').forEach(b=>b.disabled=false); }
+}
+function button(text, fn) { const b=document.createElement('button');b.textContent=text;b.onclick=()=>action(fn);return b; }
+async function saved() {
+  const list=await api('/saved/list'); $('saved').replaceChildren();
+  list.forEach((ssid,index)=>{
+    const row=document.createElement('div');row.className='row';
+    const name=document.createElement('div');name.textContent=ssid+(index===0?'（默认）':'');row.append(name);
+    if(index) row.append(button('设为默认',async()=>{await api('/saved/set_default?index='+index);await saved();$('status').textContent='默认网络已更新';}));
+    row.append(button('删除',async()=>{await api('/saved/delete?index='+index);await saved();$('status').textContent='网络已删除';}));
+    $('saved').append(row);
+  });
+  if(!list.length) $('saved').textContent='暂无已保存网络';
+}
+async function scan() {
+  $('status').textContent='正在扫描…';const data=await api('/scan');$('networks').replaceChildren();
+  const seen=new Set();
+  data.aps.sort((a,b)=>b.rssi-a.rssi).forEach(ap=>{
+    if(!ap.ssid||seen.has(ap.ssid))return;seen.add(ap.ssid);
+    $('networks').append(button(ap.ssid+' · '+ap.rssi+' dBm',async()=>{$('ssid').value=ap.ssid;$('password').value='';$('password').focus();}));
+  });
+  $('status').textContent=seen.size?'请选择网络，也可以手动输入名称':'暂未发现网络，请再次扫描或手动输入';
+}
+$('scan').onclick=()=>action(scan);
+$('connect').onsubmit=e=>{e.preventDefault();action(async()=>{
+  const ssid=$('ssid').value,password=$('password').value,bytes=s=>new TextEncoder().encode(s).length;
+  if(!ssid||bytes(ssid)>32||bytes(password)>64) throw Error('网络名称须为 1–32 字节，密码最多 64 字节');
+  $('status').textContent='正在连接，请稍候…';
+  await connectNetwork(ssid,password);
+  $('password').value='';
+  try { await saved(); } catch(e) { /* A list refresh failure must not negate a confirmed save. */ }
+  $('status').textContent='连接成功，网络已保存。点击“退出配网”返回 AI 对话。';
+});};
+$('exit').onclick=()=>action(async()=>{await api('/exit',{method:'POST'});$('status').textContent='已退出配网，请返回设备开始 AI 对话。';});
+action(async()=>{await saved();await scan();});
+</script>
+</html>
