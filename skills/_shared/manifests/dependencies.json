@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "cmake": {
+    "version": "4.0.3",
+    "url": "https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-windows-x86_64.zip",
+    "sha256": "b59a31dfbfa376a4aaea9ff560ff2b29f78ee5f9fb15447fc71ae7bf9fea9379",
+    "relative_root": "cmake-4.0.3-windows-x86_64"
+  },
+  "ninja": {
+    "version": "1.12.1",
+    "url": "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip",
+    "sha256": "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a",
+    "relative_root": "."
+  },
+  "mingw": {
+    "version": "13.2.0",
+    "url": "https://github.com/brechtsanders/winlibs_mingw/releases/download/13.2.0posix-17.0.6-11.0.1-msvcrt-r4/winlibs-x86_64-posix-seh-gcc-13.2.0-mingw-w64msvcrt-11.0.1-r4.zip",
+    "sha256": "32959c4557378df2766bb0909126ec920df4688c444fd7f8bd0ad3b3ad97d776",
+    "relative_root": "mingw64"
+  },
+  "sdk": {
+    "version": "26.8.0",
+    "url": "https://download.huaweicloud-koophone.com/convai-sdk/convai_sdk_26.8.0.tar",
+    "sha256": "76ca0bf0e4ebbd352f9eb66c679746101165b0e1e343c8cbbd8ddde1636b1d7a",
+    "relative_root": "."
+  },
+  "esp_idf": {
+    "version": "v6.1",
+    "repository": "https://github.com/espressif/esp-idf.git"
+  },
+  "ws63_tools": {
+    "version": "hoperun-local-2026-10-20",
+    "local_path": "goldieos-ws63-tools.tar.gz",
+    "url": null,
+    "sha256": "5c841c0bac8b8ac89b589c5b4583fdd251cb17613877e800430a747493104dac",
+    "relative_root": "."
+  }
+}

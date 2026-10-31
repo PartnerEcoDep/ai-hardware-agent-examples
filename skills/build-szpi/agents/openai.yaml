@@ -1,0 +1,4 @@
+interface:
+  display_name: "立创实战派 ESP32-S3构建"
+  short_description: "从本地或在线准备 Windows 构建依赖，生成立创实战派 ESP32-S3程序"
+  default_prompt: "使用 $build-szpi，按当前 unified-app 架构准备依赖并构建立创实战派 ESP32-S3程序。"

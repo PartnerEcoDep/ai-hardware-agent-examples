@@ -1,8 +1,24 @@
-.vscode
-.claude
 build*/
-.history
-
-# BurnTool 运行日志（每次烧录自动生成/改写，不纳入版本控制）
-examples/goldieos/tools/burn/**/BurnTool/log.txt
-examples/goldieos/tools/burn/**/BurnTool/optLog/
+# Build workflow sources are not generated build directories.
+!skills/build-*/
+!skills/build-*/**
+managed_components/
+sdkconfig
+sdkconfig.old
+config/local.defaults
+config/ws63.local.h
+__pycache__/
+# Local source/document snapshots are not build dependencies.
+/docs.zip
+/src.zip
+skills/_shared/manifests/cache/
+skills/_shared/manifests/local.json
+skills/_shared/manifests/*.zip
+skills/_shared/manifests/*.7z
+skills/_shared/manifests/*.tar
+skills/_shared/manifests/*.gz
+skills/_shared/manifests/*.exe
+skills/_shared/manifests/*.dll
+skills/_shared/manifests/*.a
+skills/_shared/manifests/*.bin
+skills/_shared/manifests/*.fwpkg

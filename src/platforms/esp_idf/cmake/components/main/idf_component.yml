@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=6.0,<6.2"
+  espressif/cjson: "1.7.19~2"
+  espressif/esp_codec_dev: "1.6.2"
+  lvgl/lvgl: "9.5.0"
+description: Minimal portable AI dialogue application for SZPI and LRD ESP32-S3

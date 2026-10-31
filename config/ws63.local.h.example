@@ -1,0 +1,11 @@
+/* Copy to config/ws63.local.h; never commit real credentials. */
+#define WS_AI_AGENT_ID ""
+#define WS_AI_API_KEY ""
+#define WS_AI_PRODUCT_ID ""
+#define WS_AI_PRODUCT_KEY ""
+#define WS_AI_PRODUCT_SECRET ""
+/* Empty uses the SDK's default endpoint and CA configuration. */
+#define WS_AI_SERVER_URL ""
+/* Optional PEM trust anchor when the SDK does not supply one. */
+#define WS_AI_CA_CERT_PEM ""
+#define WS_AI_PLAYBACK_BYTES 16000

@@ -1,0 +1,8 @@
+# Copy to local.defaults before first configure, or use idf.py menuconfig.
+CONFIG_AI_AGENT_ID="your_agent_id"
+CONFIG_AI_API_KEY="your_api_key"
+# Alternative: leave API_KEY empty and fill all three product credentials.
+# CONFIG_AI_PRODUCT_ID=""
+# CONFIG_AI_PRODUCT_KEY=""
+# CONFIG_AI_PRODUCT_SECRET=""
+# CONFIG_AI_SERVER_URL="wss://your-service/path"

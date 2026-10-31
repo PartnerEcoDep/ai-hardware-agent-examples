@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hoperun Windows 模拟器构建"
+  short_description: "从本地或在线准备 Windows 构建依赖，生成Hoperun Windows 模拟器程序"
+  default_prompt: "使用 $build-hoperun-simulator，按当前 unified-app 架构准备依赖并构建Hoperun Windows 模拟器程序。"
