@@ -38,9 +38,9 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 
 | 目录 | 文本文件数（递归） | 行数（递归） |
 |---|---:|---:|
-| `./（项目合计）` | 227 | 27161 |
+| `./（项目合计）` | 230 | 27350 |
 | `config/` | 7 | 66 |
-| `docs/` | 23 | 4701 |
+| `docs/` | 23 | 4716 |
 | `docs/training/` | 9 | 1146 |
 | `skills/` | 16 | 602 |
 | `skills/_shared/` | 8 | 466 |
@@ -149,7 +149,8 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `third_party/convai-sdk-26.8.0/include/` | 4 | 602 |
 | `third_party/convai-sdk-26.8.0/include/convai/` | 4 | 602 |
 | `third_party/goldieos/` | 3 | 9003 |
-| `tools/` | 2 | 92 |
+| `tools/` | 5 | 266 |
+| `tools/ui-preview/` | 3 | 174 |
 
 根目录直属文本文件：4 个，共 293 行；已包含在项目合计中。
 
@@ -171,8 +172,8 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `docs/board-comparison.md` | 310 | 芯片平台、三款板级实现和 Hoperun Windows 模拟器对比及当前验收状态 |
 | `CMakeLists.txt` | 20 | 轻量构建分发；默认 ESP32-S3，支持 GoldieOS WS63/Windows，阻止跨目标复用缓存 |
 | `README.md` | 209 | 更新媒体契约归属 |
-| `docs/repository-guide.md` | 550 | 同步文件用途及行数 |
-| `docs/validation.md` | 831 | 记录测试、四目标构建及产物哈希 |
+| `docs/repository-guide.md` | 559 | 同步文件用途及行数 |
+| `docs/validation.md` | 837 | 记录测试、四目标构建及产物哈希 |
 | `dependencies.lock` | 40 | 锁定组件版本和内容校验值；应与 manifest 一起提交 |
 | `src/platforms/esp_idf/cmake/components/main/CMakeLists.txt` | 3 | 注册应用入口组件及其依赖 |
 | `src/platforms/esp_idf/cmake/components/main/Kconfig.projbuild` | 28 | menuconfig 中的 Agent、鉴权、服务地址、音量与播放缓冲选项；默认鉴权值为空 |
@@ -548,3 +549,11 @@ git add --dry-run -- .
 | `third_party/goldieos/files.json` | 8972 | 归档逐文件路径、大小和 SHA-256；不含本地绝对路径。 |
 | `third_party/goldieos/README.md` | 29 | 依赖范围、来源、工具包与上库边界说明。 |
 | `third_party/goldieos/runtime.tar.gz` | — | GoldieOS 必要运行源码、头文件、成套库与打包配置归档；二进制不计行数。 |
+
+## 独立 UI 预览工具
+
+| 文件 | 行数 | 说明 |
+|---|---:|---|
+| `tools/ui-preview/CMakeLists.txt` | 21 | Windows LVGL 预览独立构建入口。 |
+| `tools/ui-preview/main.c` | 129 | Windows 显示、鼠标输入、模拟状态及板名切换。 |
+| `tools/ui-preview/README.md` | 24 | 预览操作、构建要求与范围。 |
