@@ -257,7 +257,7 @@ Connecting 有 30 秒超时检查，但由 owner 的 tick 驱动；若 SDK 调�
 | 项目 | 目前状态与边界 |
 |---|---|
 | 其他 WS63 伙伴 | 兼容当前服务 ABI 的板优先扩展 boards；不同 SDK/OS 服务体系仍需 ports 后端 |
-| 树莓派/Linux | 预留公共契约复用方向，未实现 Linux 后端与板型 |
+| Raspberry Pi 3 Model B / Linux | 已实现 Linux 桌面无 SDK 演示，复用 controller/app/UI；真实 SDK、音频、配网及实机验收待完成，见 platforms/linux/README.md |
 | Windows 主控硬件自动化 | 串口控制、持续日志、设备 ID 发现、多设备管理属于设计，尚未形成可用协议实现 |
 | 一套用例跨硬件 | 能力声明、统一会话/测试协议、能力驱动跳过属于阶段 0 方案 |
 | test/release 构建 | 产品测试入口与发布裁剪方案未落地；CMake Release 优化配置不等于该方案 |

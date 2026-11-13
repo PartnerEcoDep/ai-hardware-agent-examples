@@ -23,6 +23,10 @@
 
 平台组件与新增伙伴的适配边界见 [src/platforms/README.md](src/platforms/README.md)。2026-10-13 已统一平台模块职责；GoldieOS 仅指当前润和后端，不代表全部 WS63 产品。
 
+## 树莓派 3 Model B（Linux 无 SDK 演示）
+
+新增 Linux 桌面目标，复用公共 controller/app 与 LVGL 页面，可通过 VNC 操作，Start/Stop 驱动模拟会话。首个系统基线为 Raspberry Pi OS 64-bit Desktop / Trixie。构建选项为 `UNIFIED_TARGET=linux`、`LINUX_BOARD=pi3_model_b`；详细依赖、命令及验证边界见 [Linux 说明](src/platforms/linux/README.md)。当前不提供真实云对话、音频或热点配网，功能状态不可与已有三板等同。
+
 ## 使用范围
 
 - 润和 Windows 模拟器共用对话页面与业务代码，直接使用 Windows 网络，仅保留网络状态和 Start/Stop，不提供 Wi-Fi 配网。构建与运行见 [模拟器说明](src/platforms/goldieos/targets/windows/README.md)。

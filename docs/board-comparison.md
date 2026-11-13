@@ -308,3 +308,19 @@ ConvAI SDK
 ## 统一业务启动体验（2026-10-10）
 
 三款单板上电后直接进入配网和对话初始化；润和 WS63 不再以“仅充电模式”阻塞业务，也不因拨动开关而在业务层关闭 Wi-Fi。电源锁存仍由 src/boards/ws63/hoperun/board.c 的板级任务处理，物理断电属于板级行为。Windows 模拟器沿用同一应用流程，但使用电脑网络且不提供配网入口。
+
+
+## 扩展目标：Raspberry Pi 3 Model B（2026-11-12，桌面演示）
+
+| 边界 | 当前 ESP32-S3 两板 | 当前润和 WS63 | Raspberry Pi 3 Model B |
+|---|---|---|---|
+| 软件平台 | ESP-IDF | GoldieOS/LiteOS | Linux 用户态，计划先验证 Raspberry Pi OS |
+| 板级归属 | boards/esp32/{lrd,szpi} | boards/ws63/hoperun | boards/raspberry_pi/pi3_model_b（板型配置已增加） |
+| 平台代码 | platforms/esp_idf | platforms/goldieos | platforms/linux（已实现桌面演示） |
+| 显示及输入 | 已接入板载显示/输入 | 已接入板载显示/输入 | 外接屏幕及鼠标/触摸待确认；无固定 320×240 物理屏 |
+| 音频 | 已接入板级音频 | GoldieOS 音频服务 | 优先评估 USB 音频，Linux 后端待实现 |
+| 网络 | 已有热点网页配网 | 已有热点网页配网 | 首期依赖系统联网，热点配网后续适配 |
+| 产物 | 合并镜像 | fwpkg | unified_ai_pi3_model_b（无 SDK 演示） |
+| 适配状态 | 已有实现，验收见验证记录 | 已有实现，已知问题另记 | 桌面演示源码已实现；具体构建结果见验证记录，未部署或实机验收 |
+
+Pi 3 Model B 与 Model B+ 为不同板型。官方硬件资料见 [产品页](https://www.raspberrypi.com/products/raspberry-pi-3-model-b/)。用户态 ABI 与实际外设组合决定适配配置，不能仅按 CPU 为 64 位选择 SDK。完整分阶段方案见 [架构说明](architecture.md)。

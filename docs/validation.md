@@ -1,5 +1,19 @@
 # 验证记录
 
+## Raspberry Pi 3 Model B / Linux 无 SDK 桌面演示（2026-11-12）
+
+- 新增 Linux entry、runtime/network/ui/demo、native 构建入口及 Pi 3 Model B 板级配置；根 CMake 增加 linux 分发。复用公共 controller/app 与 ai_lvgl.c，未修改其业务实现或既有三板参数/产物名称。
+- 目标部署基线为 Raspberry Pi OS 64-bit Desktop / Debian 13 Trixie。真实音频、云 SDK、热点配网、文件日志尚未接入；屏幕和窗口标题明确标记演示。模拟会话停止可取消，不直接回调重入 controller。
+- 本机 WSL Ubuntu 24.04 x86_64 原生 Release 构建成功（GCC 13.3.0、SDL2 2.30.0、LVGL 9.5.0）；安装构建依赖时软件源短暂中断，重试后成功。首次源码编译发现 network.c 缺少 stddef.h，补齐后通过。
+- CTest 4/4 通过：公共状态机、公共协调器、模拟会话时序/取消/重启/时间回绕、SDL dummy 后端真实 LVGL Start/Stop 点击和断网停止/恢复。模拟会话另外在 MinGW 严格警告构建与运行通过。
+- 架构检查通过，新增 Linux/SDL/POSIX 头文件隔离规则。只读审查发现的失焦误触发和绘制错误退出码已修正。
+- 未连接树莓派、未构建 ARM 产物、未验证 VNC 或实体屏幕/触摸、未重编或烧写原三款单板。本次主机构建结果不能继承为 Pi 实机验收，也不是 AI 对话验收。
+- 日志位于 build/linux-pi3-model-b/wsl-x86_64/{build.log,tests.log}；测试详细日志为 Testing/Temporary/LastTest.log。该目录产物是 x86_64 Linux ELF，不能复制到 Pi 直接执行。
+- 上库清单已加入全部本轮源码及逐文件说明，按既有清单范围重新统计行数。原全量清单脚本仍受额外历史 examples 文件影响，不宣称全仓未列文件检查通过。
+
+主机测试程序：1027824 字节；SHA-256：`349eaa8e9e9a821724f2281999fc936a6dfe4755473470684eee556b10353deb`。
+
+
 ## 独立 Windows UI 预览（2026-11-02）
 
 - 新增 tools/ui-preview，复用公共 ai_lvgl.c、ai_app.c 和 LVGL 配置；现有单板与完整模拟器源码不变。支持模拟 Start/Stop、配网提示、静态状态菜单、三板名称选择。

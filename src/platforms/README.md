@@ -29,3 +29,8 @@ GoldieOS 每个组件拥有 component.cmake，common.cmake 只组装公共应用
 构建与配置见 [GoldieOS 说明](goldieos/README.md)、[模拟器说明](goldieos/targets/windows/README.md)、[项目 README](../../README.md)。整体规划见 [架构设计](../../docs/architecture.md)。
 
 公共协调由 src/application/core/ai_controller.c 提供；平台 entry 只组装回调、驱动本地队列和任务。UI/按键命令与云事件使用 ai_message_t，配置准备、时间查询和配网能力通过 ai_controller_ops_t 提供。Windows 不注册配网回调。
+
+
+## 树莓派 3 Model B（无 SDK 桌面演示，2026-11-12）
+
+已新增 src/platforms/linux 的 entry、runtime/network/ui/demo 组件和 targets/native，板型配置为 src/boards/raspberry_pi/pi3_model_b。共用公共 controller/app 与 LVGL UI；模拟会话不依赖云 SDK，网络只查询系统已有连接，配网入口隐藏。建议首个运行系统为 Raspberry Pi OS 64-bit Desktop / Trixie；实机验证待完成。Linux SDK、音频、配网及日志仍待接入。构建及使用见 [Linux 说明](linux/README.md)。
