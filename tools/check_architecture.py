@@ -12,7 +12,8 @@ for folder in ('src', 'tests', 'skills/_shared/scripts'):
         if 'ai-hardware-agent-examples' in path.read_text(encoding='utf-8'):
             errors.append(f'{path.relative_to(root)} references the donor repository')
 platform_headers = ('esp_', 'freertos/', 'driver/', 'board', 'ws_board',
-                    'sdkconfig', 'goldie_', 'ws_', 'windows.h', 'wininet.h')
+                    'sdkconfig', 'goldie_', 'ws_', 'windows.h', 'wininet.h',
+                    'linux_', 'SDL', 'alsa/', 'pthread.h', 'ifaddrs.h', 'net/', 'sys/socket.h')
 for folder in ('src/application/core', 'src/application/services', 'src/application/ui'):
     if not (root / folder).is_dir():
         errors.append(f'Missing portable source directory: {folder}')

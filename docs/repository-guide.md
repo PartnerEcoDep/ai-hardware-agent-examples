@@ -38,9 +38,9 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 
 | 目录 | 文本文件数（递归） | 行数（递归） |
 |---|---:|---:|
-| `./（项目合计）` | 230 | 27350 |
+| `./（项目合计）` | 244 | 28145 |
 | `config/` | 7 | 66 |
-| `docs/` | 23 | 4716 |
+| `docs/` | 23 | 4851 |
 | `docs/training/` | 9 | 1146 |
 | `skills/` | 16 | 602 |
 | `skills/_shared/` | 8 | 466 |
@@ -56,7 +56,7 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `skills/build-lrd/agents/` | 1 | 4 |
 | `skills/build-szpi/` | 2 | 34 |
 | `skills/build-szpi/agents/` | 1 | 4 |
-| `src/` | 148 | 10803 |
+| `src/` | 161 | 11350 |
 | `src/application/` | 25 | 1041 |
 | `src/application/core/` | 4 | 286 |
 | `src/application/core/include/` | 2 | 109 |
@@ -70,7 +70,7 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `src/application/ui/` | 6 | 201 |
 | `src/application/ui/include/` | 3 | 42 |
 | `src/application/ui/web/` | 2 | 104 |
-| `src/boards/` | 27 | 1539 |
+| `src/boards/` | 28 | 1542 |
 | `src/boards/esp32/` | 22 | 1434 |
 | `src/boards/esp32/common/` | 5 | 469 |
 | `src/boards/esp32/common/esp32s3/` | 5 | 469 |
@@ -78,10 +78,12 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `src/boards/esp32/include/` | 1 | 21 |
 | `src/boards/esp32/lrd/` | 8 | 493 |
 | `src/boards/esp32/szpi/` | 8 | 451 |
+| `src/boards/raspberry_pi/` | 1 | 3 |
+| `src/boards/raspberry_pi/pi3_model_b/` | 1 | 3 |
 | `src/boards/ws63/` | 5 | 105 |
 | `src/boards/ws63/hoperun/` | 4 | 93 |
 | `src/boards/ws63/include/` | 1 | 12 |
-| `src/platforms/` | 96 | 8223 |
+| `src/platforms/` | 108 | 8767 |
 | `src/platforms/esp_idf/` | 47 | 3864 |
 | `src/platforms/esp_idf/cmake/` | 17 | 166 |
 | `src/platforms/esp_idf/cmake/components/` | 16 | 163 |
@@ -140,7 +142,20 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `src/platforms/goldieos/targets/` | 3 | 104 |
 | `src/platforms/goldieos/targets/windows/` | 2 | 54 |
 | `src/platforms/goldieos/targets/ws63/` | 1 | 50 |
-| `tests/` | 19 | 974 |
+| `src/platforms/linux/` | 12 | 539 |
+| `src/platforms/linux/components/` | 9 | 258 |
+| `src/platforms/linux/components/demo/` | 2 | 53 |
+| `src/platforms/linux/components/demo/include/` | 1 | 24 |
+| `src/platforms/linux/components/network/` | 2 | 27 |
+| `src/platforms/linux/components/network/include/` | 1 | 6 |
+| `src/platforms/linux/components/runtime/` | 2 | 19 |
+| `src/platforms/linux/components/runtime/include/` | 1 | 6 |
+| `src/platforms/linux/components/ui/` | 3 | 159 |
+| `src/platforms/linux/components/ui/include/` | 1 | 10 |
+| `src/platforms/linux/entry/` | 1 | 142 |
+| `src/platforms/linux/targets/` | 1 | 76 |
+| `src/platforms/linux/targets/native/` | 1 | 76 |
+| `tests/` | 20 | 1065 |
 | `tests/stubs/` | 4 | 42 |
 | `tests/stubs/goldie_media/` | 3 | 23 |
 | `tests/stubs/goldie_media/lwip/` | 1 | 5 |
@@ -149,10 +164,10 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `third_party/convai-sdk-26.8.0/include/` | 4 | 602 |
 | `third_party/convai-sdk-26.8.0/include/convai/` | 4 | 602 |
 | `third_party/goldieos/` | 3 | 9003 |
-| `tools/` | 5 | 266 |
-| `tools/ui-preview/` | 3 | 174 |
+| `tools/` | 5 | 282 |
+| `tools/ui-preview/` | 3 | 189 |
 
-根目录直属文本文件：4 个，共 293 行；已包含在项目合计中。
+根目录直属文本文件：4 个，共 299 行；已包含在项目合计中。
 
 ## 根目录、文档与 ESP 应用入口
 
@@ -161,7 +176,7 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | 文件 | 行数 | 用途及提交要求 |
 |---|---:|---|
 | `.gitignore` | 24 | 排除构建目录、下载缓存和本地鉴权配置 |
-| `docs/architecture.md` | 362 | 说明当前依赖方向及未改变范围 |
+| `docs/architecture.md` | 433 | 说明当前依赖方向及未改变范围 |
 | `docs/architecture-walkthrough.md` | 314 | 基于源码梳理整体架构、四张流程/复用图、验证与规划边界及 14 页分享提纲 |
 | `docs/hoperun-audio-investigation.md` | 184 | 保存单次预缓冲复测及原始 GoldieOS 对照，区分报错路径、优先级/播放/SDK 差异与待验证根因 |
 | `docs/ai-hardware-ecosystem.md` | 338 | AI 硬件生态调研、产品对比与扩展建议 |
@@ -169,11 +184,11 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `src/platforms/esp_idf/cmake/paths.cmake` | 3 | 为 ESP 组件扫描和配置提供工程根及源码根路径 |
 | `docs/changes-shared-layout-2026-10-15.md` | 81 | 公共目录与平台入口迁移的逐文件修改、构建证据及产物哈希 |
 | `docs/stage0-contracts.md` | 247 | 阶段 0 四目标能力基线、会话与测试协议草案、首批验收用例、待确认项和退出条件 |
-| `docs/board-comparison.md` | 310 | 芯片平台、三款板级实现和 Hoperun Windows 模拟器对比及当前验收状态 |
-| `CMakeLists.txt` | 20 | 轻量构建分发；默认 ESP32-S3，支持 GoldieOS WS63/Windows，阻止跨目标复用缓存 |
-| `README.md` | 209 | 更新媒体契约归属 |
-| `docs/repository-guide.md` | 559 | 同步文件用途及行数 |
-| `docs/validation.md` | 837 | 记录测试、四目标构建及产物哈希 |
+| `docs/board-comparison.md` | 326 | 芯片平台、三款板级实现和 Hoperun Windows 模拟器对比及当前验收状态 |
+| `CMakeLists.txt` | 22 | 轻量构建分发；默认 ESP32-S3，支持 GoldieOS WS63/Windows，阻止跨目标复用缓存 |
+| `README.md` | 213 | 更新媒体契约归属 |
+| `docs/repository-guide.md` | 593 | 同步文件用途及行数 |
+| `docs/validation.md` | 851 | 记录测试、四目标构建及产物哈希 |
 | `dependencies.lock` | 40 | 锁定组件版本和内容校验值；应与 manifest 一起提交 |
 | `src/platforms/esp_idf/cmake/components/main/CMakeLists.txt` | 3 | 注册应用入口组件及其依赖 |
 | `src/platforms/esp_idf/cmake/components/main/Kconfig.projbuild` | 28 | menuconfig 中的 Agent、鉴权、服务地址、音量与播放缓冲选项；默认鉴权值为空 |
@@ -364,7 +379,7 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 | `tests/test_wifi_web.cjs` | 75 | 执行真实共用页面脚本，验证扫描去重、特殊名称、保存/默认/删除、退出及错误；需 Node |
 | `tests/test_ws_config.c` | 26 | 测试真实云配置生成、设备标识失败、内存失败恢复及 JSON 数字类型 |
 | `tests/test_ws_wifi_store.c` | 40 | 模拟 NV 的重启加载、读写失败、冲突保护、校验回退和删除回归 |
-| `tools/check_architecture.py` | 54 | 防止媒体模块直接引入云或 SDK 头 |
+| `tools/check_architecture.py` | 55 | 防止媒体模块直接引入云或 SDK 头 |
 | `tools/update_repository_guide.py` | 38 | 从 Git 候选文件集合检查清单覆盖率、更新逐文件及目录行数；与执行目录无关，不读取鉴权内容。 |
 
 ## 第三方依赖
@@ -412,7 +427,7 @@ src/boards/esp32/common/esp32s3 为两块 ESP 板的共用实现，不代表 WS6
 
 | 文件 | 行数 | 用途及提交要求 |
 |---|---:|---|
-| `src/platforms/README.md` | 31 | 平台模块职责、GoldieOS/WS63 边界、未来平台扩展约定 |
+| `src/platforms/README.md` | 36 | 平台模块职责、GoldieOS/WS63 边界、未来平台扩展约定 |
 | `src/platforms/goldieos/components/network/windows/network.c` | 24 | 状态查询限定为文件内部函数 |
 | `src/platforms/goldieos/components/config/component.cmake` | 10 | GoldieOS config 组件源文件与依赖注册；按需要选择后端 |
 | `src/platforms/goldieos/components/media/component.cmake` | 3 | GoldieOS media 组件源文件与依赖注册；按需要选择后端 |
@@ -554,6 +569,25 @@ git add --dry-run -- .
 
 | 文件 | 行数 | 说明 |
 |---|---:|---|
-| `tools/ui-preview/CMakeLists.txt` | 21 | Windows LVGL 预览独立构建入口。 |
-| `tools/ui-preview/main.c` | 129 | Windows 显示、鼠标输入、模拟状态及板名切换。 |
-| `tools/ui-preview/README.md` | 24 | 预览操作、构建要求与范围。 |
+| `tools/ui-preview/CMakeLists.txt` | 30 | Windows LVGL 预览独立构建入口。 |
+| `tools/ui-preview/main.c` | 132 | Windows 显示、鼠标输入、模拟状态及板名切换。 |
+| `tools/ui-preview/README.md` | 27 | 预览操作、构建要求与范围。 |
+
+## Linux / Raspberry Pi 3 Model B 桌面演示
+
+| 文件 | 行数 | 说明 |
+|---|---:|---|
+| `src/boards/raspberry_pi/pi3_model_b/board.cmake` | 3 | Pi 3 Model B 板名与产物名配置。 |
+| `src/platforms/linux/components/demo/demo_session.c` | 29 | 无 SDK 的可取消模拟会话事件源。 |
+| `src/platforms/linux/components/demo/include/linux_demo_session.h` | 24 | 模拟会话状态及轮询接口。 |
+| `src/platforms/linux/components/network/include/linux_network.h` | 6 | Linux 网络状态查询接口。 |
+| `src/platforms/linux/components/network/network.c` | 21 | 查询 Linux 非回环 IP 接口是否在线。 |
+| `src/platforms/linux/components/runtime/include/linux_runtime.h` | 6 | Linux 时间接口。 |
+| `src/platforms/linux/components/runtime/runtime.c` | 13 | Linux 单调时钟及睡眠适配。 |
+| `src/platforms/linux/components/ui/include/linux_ui.h` | 10 | 桌面 UI 生命周期与测试输入接口。 |
+| `src/platforms/linux/components/ui/lv_conf.h` | 22 | Linux 独立 LVGL 配置。 |
+| `src/platforms/linux/components/ui/ui.c` | 127 | SDL2 显示与鼠标到 LVGL 的输入适配。 |
+| `src/platforms/linux/entry/main.c` | 142 | Linux 单线程应用组装、命令队列及端到端烟雾测试。 |
+| `src/platforms/linux/README.md` | 63 | Linux 桌面演示范围、树莓派构建与 VNC 使用说明。 |
+| `src/platforms/linux/targets/native/CMakeLists.txt` | 76 | Linux 目标、LVGL/SDL2 依赖、板型选择及测试构建。 |
+| `tests/test_linux_demo_session.c` | 91 | 模拟会话时序、取消、重启、回绕与公共状态机测试。 |

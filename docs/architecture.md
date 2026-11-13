@@ -30,12 +30,14 @@ unified-app/
 │   │   └── ui/                # LVGL 与手机网页
 │   ├── platforms/
 │   │   ├── esp_idf/           # entry/components/targets/cmake
-│   │   └── goldieos/          # 同上，另有运行时与事件接口
+│   │   ├── goldieos/          # 同上，另有运行时与事件接口
+│   │   └── linux/             # 新增桌面演示：entry、runtime/network/ui/demo、native 目标
 │   │                          # network/convai/runtime 内分 ws63/windows
 │   └── boards/
 │       ├── include/
 │       ├── esp32/             # common/esp32s3、lrd、szpi
-│       └── ws63/hoperun/
+│       ├── ws63/hoperun/
+│       └── raspberry_pi/pi3_model_b/ # Linux 板型配置
 ├── config/                    # 配置模板、分区与本地配置约定
 ├── third_party/               # 外部 SDK、库与资源
 ├── tests/、tools/、skills/     # 测试、工程维护、构建工作流
@@ -184,7 +186,7 @@ check_architecture.py 增加媒体源码/头文件禁止直接引入 ai_cloud/co
 | 立创实战派 ESP32-S3 | ESP-IDF | 实机固件 | szpi，ESP32-S3 |
 | 润和 WS63 | GoldieOS | WS63 实机固件 | hoperun |
 | 润和 Windows 模拟器 | GoldieOS | Windows 模拟器进程 | 润和模拟设备配置 |
-| 未来树莓派 | Linux | Linux 进程 | 具体型号及屏幕、音频等外设组合 |
+| Raspberry Pi 3 Model B（规划） | Linux | Linux 用户态进程 | pi3_model_b，屏幕与音频外设待确认 |
 | 未来 Android | Android | 原生应用宿主 | 通常无项目自有板级层 |
 | 未来原生鸿蒙 | 原生鸿蒙 | 原生应用宿主 | 按产品设备能力配置 |
 | 未来 iOS | iOS | 原生应用宿主 | 通常无项目自有板级层 |
@@ -360,3 +362,72 @@ def test_basic_conversation(device, speech):
 ## GoldieOS 独立交付（2026-10-20）
 
 固件、模拟器和主机测试均从工程内固定归档解压 GoldieOS 必要运行依赖，平台构建脚本归本工程维护，不再推导同级示例目录。板级只提供硬件源文件和布局。编译器/链接/签名器按工具包管理，不混入产品源码；详情见 [依赖说明](../third_party/goldieos/README.md)。旧迁移记录中的外部路径仅表示历史状态。
+
+
+## Raspberry Pi 3 Model B 架构接入（2026-11-12，规划）
+
+本次明确新增架构目标为 Raspberry Pi 3 Model B，不是 Model B+。初始规划之后，本日已实现无 SDK 桌面演示：Linux entry/runtime/network/ui/demo 与板级配置，未完成树莓派实机验证。既有 ESP32、WS63 与 GoldieOS Windows 模拟器保持现有实现。
+
+### 平台、运行环境与板型
+
+- 软件平台：Linux 用户态接口；首个部署基线选用 Raspberry Pi OS 64-bit Desktop / Debian 13 Trixie；实际安装版本及工具链仍需部署时记录。64 位 CPU 不代表已安装系统或 SDK 库一定是 64 位。
+- 运行环境：Linux 进程；首阶段前台运行方便调试，稳定后可提供 systemd 服务配置。Windows 是开发与测试主控，不是树莓派应用运行环境。
+- 板型：raspberry_pi/pi3_model_b。BCM2837、1 GB RAM、USB、HDMI、DSI、以太网及 microSD 属于硬件能力，不等于这些接口已由本应用适配。硬件依据：[官方产品页](https://www.raspberrypi.com/products/raspberry-pi-3-model-b/)。
+
+长期目录职责如下；当前已实现 entry、runtime、network、ui、demo 和 targets/native，convai/media/config/cmake 仍按实际需求后续创建：
+
+```text
+src/platforms/linux/
+  entry/                    # 组装公共 app/controller，处理命令和退出
+  components/
+    runtime/                # 线程、锁、单调时钟及生命周期
+    convai/                 # Linux SDK/HAL、socket、TLS
+    media/                  # 采集与播放设备、线程、缓冲适配
+    network/                # 联网状态、后续系统配网接入
+    ui/                     # LVGL 显示与输入运行后端
+    config/                 # 本地配置加载
+  targets/native/           # Linux 用户态程序构建入口
+  cmake/                    # 工具链及公共组件组装
+src/boards/raspberry_pi/pi3_model_b/
+                            # 板型与外设配置、设备选择、必要 GPIO
+```
+
+Linux 通用能力不放进树莓派 boards；未来 Luckfox 可按其发行版及接口兼容程度复用 Linux 后端，设备、音频和显示差异由具体后端和板级配置承接。不要直接复用 GoldieOS 的 AudioService、WifiService 或 OSAL 句柄。
+
+### 功能复用与差异
+
+| 能力 | 复用部分 | Linux/树莓派新增工作 | 当前状态 |
+|---|---|---|---|
+| 会话与启停 | application/core 的 app/controller、事件与会话语义 | entry 单线程队列与可取消模拟会话 | 演示已实现，真实会话待 SDK |
+| 云对话 | 公共 cloud 服务与契约 | 匹配 Linux CPU/用户态 ABI 的 ConvAI 库、HAL、TLS 与系统时间 | 缺少随包 Linux SDK，待提供或构建 |
+| 音频上下行 | 公共 media 编解码与播放缓冲 | 初期建议 USB 音频设备；平台用 ALSA 等实际系统接口采集播放，格式不匹配时转换 | 外设及后端待确认 |
+| 界面 | 公共 LVGL 页面与状态呈现 | 已实现 SDL2 桌面窗口与鼠标输入，支持 VNC 桌面场景 | 源码已实现，实体显示/触摸待验证 |
+| 网络 | 公共网络状态语义 | 已实现 IP 接口在线检查；后续再适配系统网络管理和热点配网 | 基础查询已实现，不提供网页配网 |
+| 配网列表 | 公共添加/删除/默认网络操作语义 | 设计与系统网络管理器配置的映射，避免两套配置互相覆盖 | 后续阶段 |
+| 日志文件 | 未来公共日志入口与策略 | Linux 后台文件写入、轮转、权限与容量限制 | 公共日志服务亦未实现 |
+| 自动化测试 | 规划中的统一命令、事件、发现与验收契约 | 串口或独立有线控制链路、进程部署及设备身份管理 | 协议仍为规划 |
+
+当前公共 UI 逻辑画布是 320×240；树莓派没有固定的应用屏幕分辨率。第一阶段复用此画布，通过平台缩放/居中与输入坐标映射显示，后续再做响应式布局。不把 HDMI 输出分辨率硬编码为公共业务尺寸。无配网能力时 UI 应按能力隐藏/禁用入口，不能显示可点按钮却不执行真实功能。
+
+文件日志可位于系统 microSD 的文件系统上，不需要应用再次挂载裸 SD 控制器；必须限制日志总量并考虑断电和系统盘空间。串口控制与日志继续由 Windows 测试框架统一持有连接，再转发给外部查看工具；若采用 TCP 控制，配网/断网测试应使用独立以太网或串口，避免失去控制链路。设备 ID 与连接地址分离，不使用 COM 号或 IP 充当稳定设备身份。
+
+### 构建及分阶段验收
+
+建议未来使用 UNIFIED_TARGET=linux、LINUX_BOARD=pi3_model_b，并按体系结构和 test/release 分离 build/linux-pi3-model-b/<abi>/<profile>。上述参数已加入根 CMake；当前产物仅为无 SDK 演示，目录示例及命令见 [Linux 说明](../src/platforms/linux/README.md)。test/release 的功能隔离仍未实现，CMAKE_BUILD_TYPE=Release 仅表示优化配置。发布产物为 Linux 可执行程序及必要运行依赖/配置模板，不套用 ESP 合并镜像或 WS63 fwpkg。安装权限、运行用户、音频/显示访问权限需验证。
+
+1. 准备：锁定系统版本、armhf/aarch64、libc、编译器、ConvAI ABI/依赖、USB 音频设备、屏幕及输入设备。当前 third_party/convai-sdk-26.8.0/libs 仅包含 esp32s3/windows/ws63，禁止跨 ABI 复用这些库。
+2. 最小运行：实现 Linux entry/runtime/convai/media，以系统已联网为前提打通真实对话；复用公共状态机和音频处理，验证长回答、重复启停及连续多轮。
+3. UI 接入：复用公共页面，验证显示、鼠标或触摸、异常状态与会话回显；基础网络阶段明确不支持网页配网。
+4. 能力补齐：按产品需要实现网络配置与热点门户、日志持久化及服务部署；分别验证无音频设备、断网恢复、磁盘满及异常退出。
+5. 自动化：在统一测试协议实际落地后加入设备发现、控制、持续日志和能力声明；共用测试用例按能力选择，缺失能力明确标记不支持/跳过，不能算通过。
+
+每阶段分别记录“已实现、构建通过、实机通过”。现有三款单板的验收结果不继承到树莓派。
+
+
+### 本日第一阶段实现：SDK-free Linux desktop
+
+用户暂不接入 SDK，先实现桌面运行。主循环是 controller/app 与 LVGL 的单一所有者；点击只入队，循环先更新网络再处理命令，然后轮询模拟会话事件。模拟会话带 session 编号、停止可取消，状态转换通过已有公共状态机；窗口与网络文案明确标记 Demo。
+
+UI 使用 SDL2 软件渲染与鼠标输入，逻辑尺寸 320×240，默认 2 倍；VNC 桌面可见性仍需实机验收。network 仅查询现有非回环 IP 接口，不执行扫描/连接/保存；Wi-Fi 入口编译隐藏。运行时使用单调时钟，SDK-free 模式不进行 TLS 时间同步。界面之外没有音频、云 SDK、GPIO 或文件日志实现。
+
+新增构建只引用公共 core/ui、Linux 与板级文件及 LVGL/SDL2，不解包 GoldieOS、不链接 ConvAI。媒体服务和云服务继续作为未来复用目标，尚未在此演示链路中运行。已有平台参数与产物名保持不变。结果及限制见 validation.md。
